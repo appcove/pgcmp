@@ -1,0 +1,10 @@
+[project]
+name = "pgcmp"
+version = "0.1.0"
+description = "PostgreSQL schema comparison tool"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary]>=3.3.2",
+    "rich>=14.2.0",
+]

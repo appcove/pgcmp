@@ -1,0 +1,20 @@
+[package]
+name = "pgcmp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio-postgres = "0.7"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+toml = "0.9"
+serde = { version = "1", features = ["derive"] }
+git2 = "0.20.3"
+anyhow = "1"
+console = "0.16.2"
+indicatif = "0.18.3"
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+tui-input = "0.15.0"
+pg_query = "6"
