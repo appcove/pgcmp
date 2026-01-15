@@ -7,6 +7,7 @@ pub mod config;
 pub mod db;
 pub mod git;
 pub mod memfs;
+pub mod migration;
 pub mod schema;
 
 pub struct App {

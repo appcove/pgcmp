@@ -9,9 +9,9 @@ use crate::db::sequences::fetch_sequences;
 use crate::db::tables::fetch_tables;
 use crate::db::triggers::fetch_triggers;
 use crate::db::views::{fetch_materialized_views, fetch_views};
-use anyhow::{bail, Context};
+use crate::migration::{execute_migration_for_test, load_and_validate_migration};
+use anyhow::Context;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 
 pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
     let config = Config::load(&app.path).context("Failed to load CONFIG.toml")?;
@@ -26,17 +26,9 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
         .as_ref()
         .context("No 'old' database configured in CONFIG.toml")?;
 
-    // Read migration file
+    // Read and validate migration file
     let migration_path = app.path.join(&args.migration_file);
-    let migration_sql = fs::read_to_string(&migration_path)
-        .with_context(|| format!("Failed to read migration file: {}", migration_path.display()))?;
-
-    // Validate migration SQL - check for forbidden keywords
-    validate_migration_sql(&migration_sql)?;
-
-    if migration_sql.trim().is_empty() {
-        bail!("Migration file is empty: {}", migration_path.display());
-    }
+    let migration_sql = load_and_validate_migration(&migration_path)?;
 
     eprintln!("Testing migration: {}", migration_path.display());
 
@@ -56,21 +48,14 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
     let new_version = get_postgres_version(&new_conn).await?;
     let old_version = get_postgres_version(&old_conn).await?;
 
-    // Begin transaction on old database
-    eprintln!("Beginning transaction...");
-    old_conn.client().execute("BEGIN", &[]).await?;
-
-    // Capture row counts before migration
+    // Capture row counts before migration (outside of transaction)
     eprintln!("Capturing row counts (before)...");
     let row_counts_before = capture_row_counts(&old_conn).await?;
 
     // Apply migration - execute statements one at a time for detailed error reporting
+    // This executes BEGIN and all statements except the final ROLLBACK
     eprintln!("Applying migration...");
-    if let Err(e) = execute_migration_statements(&old_conn, &migration_sql).await {
-        eprintln!("Rolling back transaction...");
-        let _ = old_conn.client().execute("ROLLBACK", &[]).await;
-        bail!("{}", e);
-    }
+    execute_migration_for_test(&old_conn, &migration_sql).await?;
     eprintln!("Migration applied successfully.");
 
     // Capture row counts after migration
@@ -107,177 +92,6 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
         );
     } else {
         eprintln!("\nMigration successful - schemas match after applying migration.");
-    }
-
-    Ok(())
-}
-
-/// Execute migration statements one at a time with detailed error reporting
-async fn execute_migration_statements(conn: &DbConnection, sql: &str) -> anyhow::Result<()> {
-    // Split SQL into individual statements using pg_query
-    let statements = pg_query::split_with_parser(sql)
-        .map_err(|e| anyhow::anyhow!("Failed to parse migration SQL: {}", e))?;
-
-    let total = statements.len();
-    eprintln!("  Executing {} statement(s)...", total);
-
-    for (idx, stmt_sql) in statements.iter().enumerate() {
-        let stmt_num = idx + 1;
-        let stmt_trimmed = stmt_sql.trim();
-
-        // Skip empty statements
-        if stmt_trimmed.is_empty() {
-            continue;
-        }
-
-        // Find line number of this statement in the original SQL
-        let line_num = find_line_number(sql, stmt_sql);
-
-        // Execute the statement
-        match conn.client().batch_execute(stmt_trimmed).await {
-            Ok(_) => {
-                // Show progress for long migrations
-                if total > 10 && stmt_num % 10 == 0 {
-                    eprintln!("  Progress: {}/{} statements", stmt_num, total);
-                }
-            }
-            Err(e) => {
-                // Build exhaustive error message
-                let mut error_msg = String::new();
-                error_msg.push_str("\n");
-                error_msg.push_str("╔══════════════════════════════════════════════════════════════════════════════\n");
-                error_msg.push_str("║ MIGRATION FAILED\n");
-                error_msg.push_str("╠══════════════════════════════════════════════════════════════════════════════\n");
-                error_msg.push_str(&format!("║ Statement: {} of {}\n", stmt_num, total));
-                error_msg.push_str(&format!("║ Line: {}\n", line_num));
-                error_msg.push_str("╠══════════════════════════════════════════════════════════════════════════════\n");
-                error_msg.push_str("║ SQL:\n");
-                error_msg.push_str("║ \n");
-
-                // Show the SQL with line numbers
-                for (i, line) in stmt_trimmed.lines().enumerate() {
-                    let display_line = if line.len() > 72 {
-                        format!("{}...", &line[..72])
-                    } else {
-                        line.to_string()
-                    };
-                    error_msg.push_str(&format!("║ {:4}: {}\n", line_num + i, display_line));
-                }
-
-                error_msg.push_str("║ \n");
-                error_msg.push_str("╠══════════════════════════════════════════════════════════════════════════════\n");
-                error_msg.push_str("║ PostgreSQL Error:\n");
-                error_msg.push_str("║ \n");
-
-                // Extract detailed error information from tokio-postgres error
-                if let Some(db_error) = e.as_db_error() {
-                    error_msg.push_str(&format!("║   Severity: {}\n", db_error.severity()));
-                    error_msg.push_str(&format!("║   Code: {}\n", db_error.code().code()));
-                    error_msg.push_str(&format!("║   Message: {}\n", db_error.message()));
-
-                    if let Some(detail) = db_error.detail() {
-                        error_msg.push_str(&format!("║   Detail: {}\n", detail));
-                    }
-                    if let Some(hint) = db_error.hint() {
-                        error_msg.push_str(&format!("║   Hint: {}\n", hint));
-                    }
-                    if let Some(position) = db_error.position() {
-                        error_msg.push_str(&format!("║   Position: {:?}\n", position));
-                    }
-                    if let Some(where_) = db_error.where_() {
-                        error_msg.push_str(&format!("║   Where: {}\n", where_));
-                    }
-                    if let Some(schema) = db_error.schema() {
-                        error_msg.push_str(&format!("║   Schema: {}\n", schema));
-                    }
-                    if let Some(table) = db_error.table() {
-                        error_msg.push_str(&format!("║   Table: {}\n", table));
-                    }
-                    if let Some(column) = db_error.column() {
-                        error_msg.push_str(&format!("║   Column: {}\n", column));
-                    }
-                    if let Some(constraint) = db_error.constraint() {
-                        error_msg.push_str(&format!("║   Constraint: {}\n", constraint));
-                    }
-                    if let Some(datatype) = db_error.datatype() {
-                        error_msg.push_str(&format!("║   Data Type: {}\n", datatype));
-                    }
-                } else {
-                    error_msg.push_str(&format!("║   {}\n", e));
-                }
-
-                error_msg.push_str("║ \n");
-                error_msg.push_str("╚══════════════════════════════════════════════════════════════════════════════\n");
-
-                return Err(anyhow::anyhow!("{}", error_msg));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Find the line number where a statement starts in the original SQL
-fn find_line_number(full_sql: &str, statement: &str) -> usize {
-    // Try to find the statement in the original SQL
-    let stmt_trimmed = statement.trim();
-    if let Some(pos) = full_sql.find(stmt_trimmed) {
-        // Count newlines before this position
-        full_sql[..pos].matches('\n').count() + 1
-    } else {
-        // Fallback - try to find first non-comment line
-        1
-    }
-}
-
-/// Validate migration SQL for forbidden transaction control statements using pg_query parser
-fn validate_migration_sql(sql: &str) -> anyhow::Result<()> {
-    use pg_query::protobuf::TransactionStmtKind;
-
-    // Parse SQL using PostgreSQL's actual parser
-    let result = pg_query::parse(sql)
-        .map_err(|e| anyhow::anyhow!("Failed to parse migration SQL: {}", e))?;
-
-    // Walk through all nodes looking for transaction statements
-    for node in result.protobuf.stmts.iter() {
-        if let Some(ref stmt) = node.stmt {
-            if let Some(ref node_enum) = stmt.node {
-                if let pg_query::protobuf::node::Node::TransactionStmt(txn) = node_enum {
-                    let kind = txn.kind();
-                    match kind {
-                        TransactionStmtKind::TransStmtCommit
-                        | TransactionStmtKind::TransStmtCommitPrepared => {
-                            bail!(
-                                "Migration file contains COMMIT statement. \
-                                Transaction control is managed by pgcmp test. \
-                                Please remove COMMIT from your migration."
-                            );
-                        }
-                        TransactionStmtKind::TransStmtRollback
-                        | TransactionStmtKind::TransStmtRollbackPrepared
-                        | TransactionStmtKind::TransStmtRollbackTo => {
-                            bail!(
-                                "Migration file contains ROLLBACK statement. \
-                                Transaction control is managed by pgcmp test. \
-                                Please remove ROLLBACK from your migration."
-                            );
-                        }
-                        // BEGIN/START TRANSACTION would fail anyway since we're already in a transaction,
-                        // but let's warn about it too
-                        TransactionStmtKind::TransStmtBegin
-                        | TransactionStmtKind::TransStmtStart => {
-                            bail!(
-                                "Migration file contains BEGIN/START TRANSACTION statement. \
-                                Transaction control is managed by pgcmp test. \
-                                Please remove BEGIN from your migration."
-                            );
-                        }
-                        // Savepoints are fine
-                        _ => {}
-                    }
-                }
-            }
-        }
     }
 
     Ok(())

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 cargo build          # Build the project
-cargo run -- <cmd>   # Run a command (init, pull, diff, test)
+cargo run -- <cmd>   # Run a command (init, pull, diff, test, apply)
 cargo test           # Run tests
 ```
 
@@ -22,11 +22,13 @@ pgcmp is a PostgreSQL schema comparison CLI tool written in Rust. It compares "n
 | `pgcmp pull` | Extract schemas from both databases to `new.database/` and `old.database/` directories |
 | `pgcmp diff` | Live comparison between databases, print differences |
 | `pgcmp test` | Apply `MIGRATION.sql` in transaction, show diff + row counts, rollback |
+| `pgcmp apply` | Apply `MIGRATION.sql` to old database (rollback by default, use `--commit` to persist) |
 
 ### Module Structure
 
 - **`src/cli/`** - Clap CLI argument definitions
-- **`src/commands/`** - Command implementations (init, pull, diff, test)
+- **`src/commands/`** - Command implementations (init, pull, diff, test, apply)
+- **`src/migration.rs`** - Shared migration validation and execution (validates BEGIN/ROLLBACK structure)
 - **`src/db/`** - Database connectivity and schema extraction
   - `connection.rs` - tokio-postgres connection wrapper with 2s timeout
   - `extraction.rs` - Coordinates extraction of all object types
@@ -70,3 +72,22 @@ project/
     └── {schema}.schema/
         └── {object}.{type}.sql
 ```
+
+### Migration File Format
+
+Migration files MUST have the following structure:
+
+```sql
+BEGIN TRANSACTION;
+
+-- Your migration SQL here
+ALTER TABLE users ADD COLUMN email VARCHAR(255);
+CREATE INDEX idx_users_email ON users(email);
+
+ROLLBACK;
+```
+
+- First statement must be `BEGIN TRANSACTION;` (or `BEGIN;`)
+- Last statement must be `ROLLBACK;`
+- No COMMIT, extra BEGIN, or extra ROLLBACK statements allowed in the middle
+- This format ensures migrations are always safe to test without accidentally applying them

@@ -39,6 +39,16 @@ enum Tab {
 
 const TABS: [Tab; 6] = [Tab::Git, Tab::NewDb, Tab::OldDb, Tab::Pull, Tab::Claude, Tab::Migration];
 
+/// Default template for MIGRATION.sql files.
+/// Must start with BEGIN TRANSACTION and end with ROLLBACK for safety.
+const DEFAULT_MIGRATION_TEMPLATE: &str = "\
+BEGIN TRANSACTION;
+
+-- Add your migration SQL statements here
+
+ROLLBACK;
+";
+
 impl Tab {
     fn index(self) -> usize {
         TABS.iter().position(|&t| t == self).unwrap_or(0)
@@ -494,14 +504,14 @@ impl State {
         if !migration_path.exists() {
             memfs.write(
                 PathBuf::from("MIGRATION.sql"),
-                "-- Migration SQL\n-- Add your migration statements here\n",
+                DEFAULT_MIGRATION_TEMPLATE,
             );
         }
 
         Self {
             app,
             tab: Tab::Git,
-            focus: Focus::GitButton(GitButton::Refresh),
+            focus: Focus::TabBar,
             new_db,
             old_db,
             memfs,
@@ -1181,7 +1191,7 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                     match btn {
                         MigrationButton::Clear => {
                             // Write empty content to memfs
-                            state.memfs.write(PathBuf::from("MIGRATION.sql"), "");
+                            state.memfs.write(PathBuf::from("MIGRATION.sql"), DEFAULT_MIGRATION_TEMPLATE);
                         }
                         MigrationButton::UndoClear => {
                             // Remove from memfs to restore disk version
@@ -1350,7 +1360,7 @@ fn handle_mouse_click(col: u16, row: u16, state: &mut State) -> anyhow::Result<(
                 state.focus = Focus::MigrationButton(btn);
                 match btn {
                     MigrationButton::Clear => {
-                        state.memfs.write(PathBuf::from("MIGRATION.sql"), "");
+                        state.memfs.write(PathBuf::from("MIGRATION.sql"), DEFAULT_MIGRATION_TEMPLATE);
                     }
                     MigrationButton::UndoClear => {
                         state.memfs.remove(PathBuf::from("MIGRATION.sql"));
@@ -3186,12 +3196,20 @@ fn generate_claude_md(state: &State) -> String {
     content.push_str("pgcmp test    # Test MIGRATION.sql against old database (with rollback)\n");
     content.push_str("```\n\n");
 
-    content.push_str("### MIGRATION.sql Rules\n\n");
-    content.push_str("**Transaction control statements are FORBIDDEN in MIGRATION.sql.**\n\n");
-    content.push_str("Do NOT use `BEGIN`, `COMMIT`, or `ROLLBACK` as transaction control statements.\n");
-    content.push_str("The `pgcmp test` command automatically wraps MIGRATION.sql in a transaction\n");
-    content.push_str("and rolls it back after testing. Adding transaction control statements will\n");
-    content.push_str("cause the test to fail.\n\n");
+    content.push_str("### MIGRATION.sql Format\n\n");
+    content.push_str("**Migration files MUST have this exact structure:**\n\n");
+    content.push_str("```sql\n");
+    content.push_str("BEGIN TRANSACTION;\n\n");
+    content.push_str("-- Your migration SQL statements here\n\n");
+    content.push_str("ROLLBACK;\n");
+    content.push_str("```\n\n");
+    content.push_str("- First statement MUST be `BEGIN TRANSACTION;` (or `BEGIN;`)\n");
+    content.push_str("- Last statement MUST be `ROLLBACK;`\n");
+    content.push_str("- Do NOT put `COMMIT` anywhere in the file\n");
+    content.push_str("- Do NOT put extra `BEGIN` or `ROLLBACK` statements in the middle\n\n");
+    content.push_str("This format ensures migrations cannot be accidentally applied. The `pgcmp test`\n");
+    content.push_str("command validates this structure before running. To actually apply a migration,\n");
+    content.push_str("use `pgcmp apply --commit` which overrides the final ROLLBACK with COMMIT.\n\n");
 
     content.push_str("**Use DO blocks for procedural logic.**\n\n");
     content.push_str("When you need loops, conditionals, or other procedural logic in your migration,\n");

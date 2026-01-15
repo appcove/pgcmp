@@ -13,5 +13,6 @@ async fn main() -> anyhow::Result<()> {
         Command::Pull(args) => pgcmp::commands::run_pull(app, args).await,
         Command::Diff(args) => pgcmp::commands::run_diff(app, args).await,
         Command::Test(args) => pgcmp::commands::run_test(app, args).await,
+        Command::Apply(args) => pgcmp::commands::run_apply(app, args).await,
     }
 }

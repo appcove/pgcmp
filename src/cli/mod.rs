@@ -21,8 +21,11 @@ pub enum Command {
     /// Compare schemas between databases and show differences
     Diff(DiffArgs),
 
-    /// Test MIGRATION.sql in a transaction (with rollback)
+    /// Test MIGRATION.sql in a transaction (with rollback) and compare schemas
     Test(TestArgs),
+
+    /// Apply MIGRATION.sql to the old database (rollback by default, use --commit to persist)
+    Apply(ApplyArgs),
 }
 
 #[derive(Parser)]
@@ -59,4 +62,15 @@ pub struct TestArgs {
     /// Migration file to test
     #[arg(long, default_value = "MIGRATION.sql")]
     pub migration_file: PathBuf,
+}
+
+#[derive(Parser)]
+pub struct ApplyArgs {
+    /// Migration file to apply
+    #[arg(long, default_value = "MIGRATION.sql")]
+    pub migration_file: PathBuf,
+
+    /// Actually commit the migration (without this flag, migration is rolled back)
+    #[arg(long)]
+    pub commit: bool,
 }
