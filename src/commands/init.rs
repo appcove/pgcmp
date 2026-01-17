@@ -1656,6 +1656,16 @@ async fn do_pull(
         };
 
         check_cancel!();
+        let _ = tx.send(PullMessage::Status("New DB: extracting types...".into())).await;
+        match crate::db::types::extract_types(conn.client()).await {
+            Ok(objs) => data.new_objects.extend(objs),
+            Err(e) => {
+                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract types: {}", e)))).await;
+                return;
+            }
+        }
+
+        check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting tables...".into())).await;
         match crate::db::tables::extract_tables(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
@@ -1749,6 +1759,16 @@ async fn do_pull(
                 return;
             }
         };
+
+        check_cancel!();
+        let _ = tx.send(PullMessage::Status("Old DB: extracting types...".into())).await;
+        match crate::db::types::extract_types(conn.client()).await {
+            Ok(objs) => data.old_objects.extend(objs),
+            Err(e) => {
+                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract types: {}", e)))).await;
+                return;
+            }
+        }
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting tables...".into())).await;

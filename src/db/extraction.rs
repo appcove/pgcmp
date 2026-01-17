@@ -5,6 +5,7 @@ use super::indexes::extract_indexes;
 use super::sequences::extract_sequences;
 use super::tables::extract_tables;
 use super::triggers::extract_triggers;
+use super::types::extract_types;
 use super::views::{extract_materialized_views, extract_views};
 use crate::schema::SchemaObject;
 
@@ -21,7 +22,8 @@ impl<'a> SchemaExtractor<'a> {
         let client = self.conn.client();
         let mut objects = Vec::new();
 
-        // Extract all object types
+        // Extract all object types (types first since other objects may depend on them)
+        objects.extend(extract_types(client).await?);
         objects.extend(extract_tables(client).await?);
         objects.extend(extract_views(client).await?);
         objects.extend(extract_materialized_views(client).await?);

@@ -8,6 +8,7 @@ use crate::db::indexes::fetch_indexes;
 use crate::db::sequences::fetch_sequences;
 use crate::db::tables::fetch_tables;
 use crate::db::triggers::fetch_triggers;
+use crate::db::types::fetch_types;
 use crate::db::views::{fetch_materialized_views, fetch_views};
 use anyhow::Context;
 use std::collections::{HashMap, HashSet};
@@ -103,6 +104,7 @@ struct ObjectAnalysis {
 struct AnalysisResult {
     summary: Vec<SummaryRow>,
     schemas: Vec<ObjectAnalysis>,
+    types: Vec<ObjectAnalysis>,
     tables: Vec<ObjectAnalysis>,
     columns: Vec<ObjectAnalysis>,
     views: Vec<ObjectAnalysis>,
@@ -117,6 +119,7 @@ struct AnalysisResult {
 impl AnalysisResult {
     fn has_differences(&self) -> bool {
         !self.schemas.is_empty()
+            || !self.types.is_empty()
             || !self.tables.is_empty()
             || !self.columns.is_empty()
             || !self.views.is_empty()
@@ -130,6 +133,7 @@ impl AnalysisResult {
 
     fn count_differences(&self) -> usize {
         self.schemas.len()
+            + self.types.len()
             + self.tables.len()
             + self.columns.len()
             + self.views.len()
@@ -180,6 +184,9 @@ async fn analyze_databases(
     let (left_sequences, right_sequences) =
         tokio::try_join!(fetch_sequences(left_client), fetch_sequences(right_client))?;
 
+    let (left_types, right_types) =
+        tokio::try_join!(fetch_types(left_client), fetch_types(right_client))?;
+
     // Extract schemas from tables
     let left_schemas: HashSet<&str> = left_tables.iter().map(|t| t.schema_name.as_str()).collect();
     let right_schemas: HashSet<&str> = right_tables.iter().map(|t| t.schema_name.as_str()).collect();
@@ -190,6 +197,11 @@ async fn analyze_databases(
             object_type: "Schemas",
             left_count: left_schemas.len(),
             right_count: right_schemas.len(),
+        },
+        SummaryRow {
+            object_type: "Types",
+            left_count: left_types.len(),
+            right_count: right_types.len(),
         },
         SummaryRow {
             object_type: "Tables",
@@ -241,6 +253,9 @@ async fn analyze_databases(
     // Analyze schemas
     let schemas = analyze_schemas(&left_schemas, &right_schemas);
 
+    // Analyze types
+    let types = analyze_types(&left_types, &right_types);
+
     // Analyze tables
     let (tables, columns) = analyze_tables(&left_tables, &right_tables);
 
@@ -266,6 +281,7 @@ async fn analyze_databases(
     Ok(AnalysisResult {
         summary,
         schemas,
+        types,
         tables,
         columns,
         views,
@@ -300,6 +316,188 @@ fn analyze_schemas(left: &HashSet<&str>, right: &HashSet<&str>) -> Vec<ObjectAna
     }
 
     result
+}
+
+fn analyze_types(
+    left: &[crate::db::types::TypeInfo],
+    right: &[crate::db::types::TypeInfo],
+) -> Vec<ObjectAnalysis> {
+    use crate::db::types::TypeInfo;
+
+    let left_map: HashMap<(&str, &str), &TypeInfo> = left
+        .iter()
+        .map(|t| ((t.schema_name.as_str(), t.type_name.as_str()), t))
+        .collect();
+
+    let right_map: HashMap<(&str, &str), &TypeInfo> = right
+        .iter()
+        .map(|t| ((t.schema_name.as_str(), t.type_name.as_str()), t))
+        .collect();
+
+    let mut result = Vec::new();
+
+    // Check for types to create (in left but not in right)
+    for type_info in left {
+        let key = (type_info.schema_name.as_str(), type_info.type_name.as_str());
+        let full_name = format!("{}.{}", type_info.schema_name, type_info.type_name);
+
+        if let Some(right_type) = right_map.get(&key) {
+            // Type exists in both - check for differences
+            let diffs = compare_type_details(type_info, right_type);
+            if !diffs.is_empty() {
+                result.push(ObjectAnalysis {
+                    name: full_name.clone(),
+                    action_description: format!(
+                        "alter {} type {}.{}",
+                        type_info.kind.label().to_lowercase(),
+                        type_info.schema_name,
+                        type_info.type_name
+                    ),
+                    modification_detail: Some(diffs.join("\n")),
+                });
+            }
+        } else {
+            // Type only in left - needs to be created
+            result.push(ObjectAnalysis {
+                name: full_name,
+                action_description: format!(
+                    "create {} type {}.{}",
+                    type_info.kind.label().to_lowercase(),
+                    type_info.schema_name,
+                    type_info.type_name
+                ),
+                modification_detail: None,
+            });
+        }
+    }
+
+    // Check for types to drop (in right but not in left)
+    for type_info in right {
+        let key = (type_info.schema_name.as_str(), type_info.type_name.as_str());
+        if !left_map.contains_key(&key) {
+            result.push(ObjectAnalysis {
+                name: format!("{}.{}", type_info.schema_name, type_info.type_name),
+                action_description: format!(
+                    "drop {} type {}.{}",
+                    type_info.kind.label().to_lowercase(),
+                    type_info.schema_name,
+                    type_info.type_name
+                ),
+                modification_detail: None,
+            });
+        }
+    }
+
+    result
+}
+
+fn compare_type_details(
+    left: &crate::db::types::TypeInfo,
+    right: &crate::db::types::TypeInfo,
+) -> Vec<String> {
+    use crate::db::types::TypeKind;
+
+    let mut diffs = Vec::new();
+
+    // Check if kind changed
+    if left.kind != right.kind {
+        diffs.push(format!(
+            "type kind changed from {} to {} (requires DROP and CREATE)",
+            right.kind.label(),
+            left.kind.label()
+        ));
+        return diffs;
+    }
+
+    match left.kind {
+        TypeKind::Enum => {
+            // Check for added enum values
+            for label in &left.enum_labels {
+                if !right.enum_labels.contains(label) {
+                    diffs.push(format!("add enum value '{}'", label));
+                }
+            }
+            // Check for removed enum values
+            for label in &right.enum_labels {
+                if !left.enum_labels.contains(label) {
+                    diffs.push(format!("remove enum value '{}' (requires recreating type)", label));
+                }
+            }
+        }
+        TypeKind::Composite => {
+            let left_attrs: HashMap<&str, &str> = left
+                .composite_attrs
+                .iter()
+                .map(|(n, t)| (n.as_str(), t.as_str()))
+                .collect();
+            let right_attrs: HashMap<&str, &str> = right
+                .composite_attrs
+                .iter()
+                .map(|(n, t)| (n.as_str(), t.as_str()))
+                .collect();
+
+            for (name, typ) in &left.composite_attrs {
+                if !right_attrs.contains_key(name.as_str()) {
+                    diffs.push(format!("add attribute {} {}", name, typ));
+                } else if right_attrs.get(name.as_str()) != Some(&typ.as_str()) {
+                    diffs.push(format!(
+                        "change attribute {} from {} to {}",
+                        name,
+                        right_attrs.get(name.as_str()).unwrap_or(&"?"),
+                        typ
+                    ));
+                }
+            }
+            for (name, _) in &right.composite_attrs {
+                if !left_attrs.contains_key(name.as_str()) {
+                    diffs.push(format!("drop attribute {}", name));
+                }
+            }
+        }
+        TypeKind::Domain => {
+            if left.domain_base_type != right.domain_base_type {
+                diffs.push(format!(
+                    "change base type from {:?} to {:?}",
+                    right.domain_base_type, left.domain_base_type
+                ));
+            }
+            if left.domain_not_null != right.domain_not_null {
+                if left.domain_not_null {
+                    diffs.push("add NOT NULL".to_string());
+                } else {
+                    diffs.push("drop NOT NULL".to_string());
+                }
+            }
+            if left.domain_default != right.domain_default {
+                diffs.push(format!(
+                    "change default from {:?} to {:?}",
+                    right.domain_default, left.domain_default
+                ));
+            }
+            if left.domain_constraint != right.domain_constraint {
+                diffs.push(format!(
+                    "change constraint from {:?} to {:?}",
+                    right.domain_constraint, left.domain_constraint
+                ));
+            }
+        }
+        TypeKind::Range => {
+            if left.range_subtype != right.range_subtype {
+                diffs.push(format!(
+                    "change subtype from {:?} to {:?}",
+                    right.range_subtype, left.range_subtype
+                ));
+            }
+            if left.range_canonical != right.range_canonical {
+                diffs.push(format!(
+                    "change canonical from {:?} to {:?}",
+                    right.range_canonical, left.range_canonical
+                ));
+            }
+        }
+    }
+
+    diffs
 }
 
 fn analyze_tables(
@@ -1023,6 +1221,9 @@ fn generate_xml(
 
     // Schemas section
     write_object_section(&mut xml, "schemas", "schema", &analysis.schemas);
+
+    // Types section
+    write_object_section(&mut xml, "types", "type", &analysis.types);
 
     // Tables section
     write_object_section(&mut xml, "tables", "table", &analysis.tables);

@@ -5,6 +5,7 @@ pub use writer::{generate_schema_file, group_by_schema, write_objects_by_schema}
 /// Types of schema objects we track
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ObjectType {
+    Type,
     Table,
     View,
     MaterializedView,
