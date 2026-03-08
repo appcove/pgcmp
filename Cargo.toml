@@ -17,4 +17,5 @@ indicatif = "0.18.3"
 ratatui = "0.30.0"
 crossterm = "0.29.0"
 tui-input = "0.15.0"
+tui-textarea = { version = "0.7", features = ["crossterm"] }
 pg_query = "6"

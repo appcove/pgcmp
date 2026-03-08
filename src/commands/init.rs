@@ -26,6 +26,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
+use tui_textarea::{TextArea, CursorMove};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tab {
@@ -33,11 +34,12 @@ enum Tab {
     OldDb,
     Pull,
     Claude,
+    Instruct,
     Migration,
     Git,
 }
 
-const TABS: [Tab; 6] = [Tab::Git, Tab::NewDb, Tab::OldDb, Tab::Pull, Tab::Claude, Tab::Migration];
+const TABS: [Tab; 7] = [Tab::Git, Tab::NewDb, Tab::OldDb, Tab::Pull, Tab::Claude, Tab::Instruct, Tab::Migration];
 
 /// Default template for MIGRATION.sql files.
 /// Must start with BEGIN TRANSACTION and end with ROLLBACK for safety.
@@ -47,6 +49,14 @@ BEGIN TRANSACTION;
 -- Add your migration SQL statements here
 
 ROLLBACK;
+";
+
+/// Default template for INSTRUCT.md files.
+/// This is extra instructions for Claude.
+const DEFAULT_INSTRUCT_TEMPLATE: &str = "\
+# Extra Instructions for Claude
+
+Add any additional instructions for Claude here.
 ";
 
 impl Tab {
@@ -60,6 +70,7 @@ impl Tab {
             Tab::OldDb => "Old DB",
             Tab::Pull => "Pull",
             Tab::Claude => "Claude",
+            Tab::Instruct => "Instruct",
             Tab::Migration => "Migration",
             Tab::Git => "Git",
         }
@@ -209,6 +220,28 @@ impl ClaudeButton {
     fn prev(self) -> Self {
         let idx = CLAUDE_BUTTONS.iter().position(|&b| b == self).unwrap_or(0);
         CLAUDE_BUTTONS[(idx + CLAUDE_BUTTONS.len() - 1) % CLAUDE_BUTTONS.len()]
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum InstructButton {
+    Save,
+    Revert,
+}
+
+const INSTRUCT_BUTTONS: [InstructButton; 2] = [
+    InstructButton::Save,
+    InstructButton::Revert,
+];
+
+impl InstructButton {
+    fn next(self) -> Self {
+        let idx = INSTRUCT_BUTTONS.iter().position(|&b| b == self).unwrap_or(0);
+        INSTRUCT_BUTTONS[(idx + 1) % INSTRUCT_BUTTONS.len()]
+    }
+    fn prev(self) -> Self {
+        let idx = INSTRUCT_BUTTONS.iter().position(|&b| b == self).unwrap_or(0);
+        INSTRUCT_BUTTONS[(idx + INSTRUCT_BUTTONS.len() - 1) % INSTRUCT_BUTTONS.len()]
     }
 }
 
@@ -396,6 +429,8 @@ enum Focus {
     DbField(Field),
     PullButton(PullButton),
     ClaudeButton(ClaudeButton),
+    InstructTextArea,
+    InstructButton(InstructButton),
     MigrationButton(MigrationButton),
     GitButton(GitButton),
     BottomButton(BottomButton),
@@ -428,6 +463,12 @@ struct State {
     claude_dialog_open: bool,
     /// Scroll offset for claude content dialog
     claude_scroll: u16,
+    /// Instruct contents dialog open (view mode)
+    instruct_dialog_open: bool,
+    /// Scroll offset for instruct content dialog
+    instruct_scroll: u16,
+    /// Instruct textarea for inline editing
+    instruct_textarea: TextArea<'static>,
     /// Flag to indicate the app should exit
     should_exit: bool,
     /// Whether .git directory exists
@@ -461,6 +502,7 @@ enum ClickTarget {
     TlsOption(Tab, TlsMode),
     PullButton(PullButton),
     ClaudeButton(ClaudeButton),
+    InstructButton(InstructButton),
     MigrationButton(MigrationButton),
     GitButton(GitButton),
     BottomButton(BottomButton),
@@ -508,6 +550,15 @@ impl State {
             );
         }
 
+        // Add INSTRUCT.md if it doesn't exist on disk
+        let instruct_path = app.path.join("INSTRUCT.md");
+        if !instruct_path.exists() {
+            memfs.write(
+                PathBuf::from("INSTRUCT.md"),
+                DEFAULT_INSTRUCT_TEMPLATE,
+            );
+        }
+
         Self {
             app,
             tab: Tab::Git,
@@ -527,6 +578,9 @@ impl State {
             migration_scroll: 0,
             claude_dialog_open: false,
             claude_scroll: 0,
+            instruct_dialog_open: false,
+            instruct_scroll: 0,
+            instruct_textarea: TextArea::default(),
             should_exit: false,
             has_git: false,
             git_clean: true,
@@ -606,6 +660,21 @@ impl State {
         }
         // Fall back to disk
         let path = self.app.path.join("CLAUDE.md");
+        std::fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    fn instruct_in_memfs(&self) -> bool {
+        self.memfs.contains(PathBuf::from("INSTRUCT.md"))
+    }
+
+    /// Get INSTRUCT.md content (from memfs if staged, otherwise from disk)
+    fn instruct_content(&self) -> String {
+        // First check memfs
+        if let Some(content) = self.memfs.get(PathBuf::from("INSTRUCT.md")) {
+            return content.to_string();
+        }
+        // Fall back to disk
+        let path = self.app.path.join("INSTRUCT.md");
         std::fs::read_to_string(&path).unwrap_or_default()
     }
 
@@ -721,6 +790,12 @@ async fn main_loop(
         // Handle Claude contents dialog
         if state.claude_dialog_open {
             handle_claude_dialog_event(&evt, &mut state);
+            continue;
+        }
+
+        // Handle Instruct contents dialog
+        if state.instruct_dialog_open {
+            handle_instruct_dialog_event(&evt, &mut state);
             continue;
         }
 
@@ -957,7 +1032,98 @@ fn handle_claude_dialog_event(evt: &Event, state: &mut State) {
     }
 }
 
+fn handle_instruct_dialog_event(evt: &Event, state: &mut State) {
+    let content = state.instruct_content();
+    let line_count = content.lines().count() as u16;
+
+    match evt {
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                    state.instruct_dialog_open = false;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if state.instruct_scroll < line_count.saturating_sub(1) {
+                        state.instruct_scroll += 1;
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    state.instruct_scroll = state.instruct_scroll.saturating_sub(1);
+                }
+                KeyCode::PageDown => {
+                    state.instruct_scroll = (state.instruct_scroll + 20).min(line_count.saturating_sub(1));
+                }
+                KeyCode::PageUp => {
+                    state.instruct_scroll = state.instruct_scroll.saturating_sub(20);
+                }
+                KeyCode::Home | KeyCode::Char('g') => {
+                    state.instruct_scroll = 0;
+                }
+                KeyCode::End | KeyCode::Char('G') => {
+                    state.instruct_scroll = line_count.saturating_sub(1);
+                }
+                _ => {}
+            }
+        }
+        Event::Mouse(m) => {
+            match m.kind {
+                MouseEventKind::Down(event::MouseButton::Left) => {
+                    // Close on click outside could be added here
+                }
+                MouseEventKind::ScrollDown => {
+                    if state.instruct_scroll < line_count.saturating_sub(1) {
+                        state.instruct_scroll += 3;
+                    }
+                }
+                MouseEventKind::ScrollUp => {
+                    state.instruct_scroll = state.instruct_scroll.saturating_sub(3);
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
 fn handle_event(evt: &Event, state: &mut State) -> anyhow::Result<bool> {
+    // Special handling for textarea when focused
+    if matches!(state.focus, Focus::InstructTextArea) {
+        if let Event::Key(key) = evt {
+            if key.kind == KeyEventKind::Press {
+                use crossterm::event::KeyModifiers;
+                // Handle Ctrl+S to save
+                if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    let content = state.instruct_textarea.lines().join("\n");
+                    state.memfs.write(PathBuf::from("INSTRUCT.md"), &content);
+                    return Ok(false);
+                }
+                // Handle Tab, BackTab, Esc for navigation
+                match key.code {
+                    KeyCode::Tab => {
+                        state.focus = Focus::InstructButton(InstructButton::Save);
+                        return Ok(false);
+                    }
+                    KeyCode::BackTab => {
+                        state.focus = Focus::TabBar;
+                        return Ok(false);
+                    }
+                    KeyCode::Esc => {
+                        if state.has_unsaved_changes() {
+                            state.dialog = Some(DialogButton::SaveAndClose);
+                        } else {
+                            return Ok(true);
+                        }
+                        return Ok(false);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Pass event to textarea
+        state.instruct_textarea.input(evt.clone());
+        return Ok(false);
+    }
+
     match evt {
         Event::Key(key) if key.kind == KeyEventKind::Press => {
             match key.code {
@@ -1141,6 +1307,67 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                 _ => {}
             }
         }
+        Focus::InstructTextArea => {
+            match code {
+                KeyCode::Tab => {
+                    state.focus = Focus::InstructButton(InstructButton::Save);
+                }
+                KeyCode::BackTab => {
+                    state.focus = Focus::TabBar;
+                }
+                KeyCode::Esc => {
+                    state.focus = Focus::TabBar;
+                }
+                _ => {
+                    // Pass key events to textarea
+                    // Note: we handle this specially in handle_event
+                }
+            }
+        }
+        Focus::InstructButton(btn) => {
+            match code {
+                KeyCode::Tab => {
+                    if btn == InstructButton::Revert {
+                        state.focus = Focus::BottomButton(BottomButton::Save);
+                    } else {
+                        state.focus = Focus::InstructButton(btn.next());
+                    }
+                }
+                KeyCode::BackTab => {
+                    if btn == InstructButton::Save {
+                        state.focus = Focus::InstructTextArea;
+                    } else {
+                        state.focus = Focus::InstructButton(btn.prev());
+                    }
+                }
+                KeyCode::Down => {
+                    state.focus = Focus::BottomButton(BottomButton::Save);
+                }
+                KeyCode::Up => {
+                    state.focus = Focus::InstructTextArea;
+                }
+                KeyCode::Left => {
+                    state.focus = Focus::InstructButton(btn.prev());
+                }
+                KeyCode::Right => {
+                    state.focus = Focus::InstructButton(btn.next());
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    match btn {
+                        InstructButton::Save => {
+                            let content = state.instruct_textarea.lines().join("\n");
+                            state.memfs.write(PathBuf::from("INSTRUCT.md"), &content);
+                        }
+                        InstructButton::Revert => {
+                            // Reload content from disk/memfs into textarea
+                            let content = state.instruct_content();
+                            state.instruct_textarea = TextArea::from(content.lines());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         Focus::MigrationButton(btn) => {
             match code {
                 KeyCode::Tab => {
@@ -1298,6 +1525,7 @@ fn default_focus_for_tab(tab: Tab) -> Focus {
         Tab::NewDb | Tab::OldDb => Focus::DbField(Field::Host),
         Tab::Pull => Focus::PullButton(PullButton::Pull),
         Tab::Claude => Focus::ClaudeButton(ClaudeButton::ViewContents),
+        Tab::Instruct => Focus::InstructTextArea,
         Tab::Migration => Focus::MigrationButton(MigrationButton::ViewContents),
         Tab::Git => Focus::GitButton(GitButton::Refresh),
     }
@@ -1353,6 +1581,20 @@ fn handle_mouse_click(col: u16, row: u16, state: &mut State) -> anyhow::Result<(
                     ClaudeButton::ViewContents => {
                         state.claude_dialog_open = true;
                         state.claude_scroll = 0;
+                    }
+                }
+            }
+            ClickTarget::InstructButton(btn) => {
+                state.focus = Focus::InstructButton(btn);
+                match btn {
+                    InstructButton::Save => {
+                        let content = state.instruct_textarea.lines().join("\n");
+                        state.memfs.write(PathBuf::from("INSTRUCT.md"), &content);
+                    }
+                    InstructButton::Revert => {
+                        // Reload content from disk/memfs into textarea
+                        let content = state.instruct_content();
+                        state.instruct_textarea = TextArea::from(content.lines());
                     }
                 }
             }
@@ -1992,6 +2234,10 @@ fn ui(f: &mut Frame, state: &mut State) {
         draw_claude_dialog(f, f.area(), state);
     }
 
+    if state.instruct_dialog_open {
+        draw_instruct_dialog(f, f.area(), state);
+    }
+
     if let Some(selected) = state.dialog {
         draw_unsaved_dialog(f, f.area(), selected, &mut state.click_areas);
     }
@@ -2086,6 +2332,13 @@ fn tab_status(tab: Tab, state: &State) -> (&'static str, Style) {
                 ("○", Style::new().dark_gray())
             }
         }
+        Tab::Instruct => {
+            if state.instruct_in_memfs() || !state.instruct_content().is_empty() {
+                ("✓", Style::new().green())
+            } else {
+                ("○", Style::new().dark_gray())
+            }
+        }
         Tab::Migration => {
             // Green if migration exists, gray otherwise
             if !state.migration_content().is_empty() {
@@ -2112,6 +2365,7 @@ fn draw_tab_content(f: &mut Frame, area: Rect, state: &mut State) {
         Tab::OldDb => draw_db_tab(f, area, state, Tab::OldDb),
         Tab::Pull => draw_pull_tab(f, area, state),
         Tab::Claude => draw_claude_tab(f, area, state),
+        Tab::Instruct => draw_instruct_tab(f, area, state),
         Tab::Migration => draw_migration_tab(f, area, state),
         Tab::Git => draw_git_tab(f, area, state),
     }
@@ -2563,6 +2817,116 @@ fn draw_claude_tab(f: &mut Frame, area: Rect, state: &mut State) {
     }
 }
 
+fn draw_instruct_tab(f: &mut Frame, area: Rect, state: &mut State) {
+    let block = Block::default()
+        .title(" Instruct ")
+        .borders(Borders::ALL)
+        .border_style(Style::new().dark_gray());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let padding = Rect::new(
+        inner.x + 1,
+        inner.y,
+        inner.width.saturating_sub(2),
+        inner.height,
+    );
+
+    // Check if textarea content differs from saved content
+    let textarea_content = state.instruct_textarea.lines().join("\n");
+    let saved_content = state.instruct_content();
+    let has_unsaved = textarea_content != saved_content;
+
+    // Status message
+    if padding.height > 0 {
+        let status_msg = Span::styled(
+            "This is extra instructions for Claude",
+            Style::new().cyan(),
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(status_msg)),
+            Rect::new(padding.x, padding.y, padding.width, 1),
+        );
+    }
+
+    // Layout: status (1) + gap (1) + textarea (remaining - 2 for buttons) + gap (1) + buttons (1)
+    let textarea_start = 2u16;
+    let button_height = 1u16;
+    let gap = 1u16;
+    let textarea_height = padding.height.saturating_sub(textarea_start + button_height + gap);
+
+    if textarea_height > 2 {
+        let textarea_area = Rect::new(
+            padding.x,
+            padding.y + textarea_start,
+            padding.width.min(100),
+            textarea_height,
+        );
+
+        // Configure textarea appearance
+        let is_focused = matches!(state.focus, Focus::InstructTextArea);
+        let border_style = if is_focused {
+            Style::new().cyan()
+        } else if has_unsaved {
+            Style::new().yellow()
+        } else {
+            Style::new().dark_gray()
+        };
+
+        let title = if has_unsaved {
+            " INSTRUCT.md (unsaved) - Ctrl+S to save "
+        } else {
+            " INSTRUCT.md "
+        };
+
+        state.instruct_textarea.set_block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(border_style)
+        );
+        state.instruct_textarea.set_cursor_line_style(Style::default());
+        state.instruct_textarea.set_line_number_style(Style::new().dark_gray());
+
+        f.render_widget(&state.instruct_textarea, textarea_area);
+    }
+
+    // Save and Revert buttons
+    let btn_y = padding.y + textarea_start + textarea_height + gap;
+    if btn_y < padding.y + padding.height {
+        let active_btn = match state.focus {
+            Focus::InstructButton(b) => Some(b),
+            _ => None,
+        };
+
+        // Save button - green if there are unsaved changes
+        let save_style = if active_btn == Some(InstructButton::Save) {
+            if has_unsaved {
+                Style::new().green().bold().reversed()
+            } else {
+                Style::new().dark_gray().bold().reversed()
+            }
+        } else if has_unsaved {
+            Style::new().green()
+        } else {
+            Style::new().dark_gray()
+        };
+        let save_area = Rect::new(padding.x, btn_y, 10, 1);
+        f.render_widget(Paragraph::new("[ Save ]").style(save_style), save_area);
+        state.click_areas.push((ClickTarget::InstructButton(InstructButton::Save), save_area));
+
+        // Revert button
+        let revert_style = if active_btn == Some(InstructButton::Revert) {
+            Style::new().bold().reversed()
+        } else {
+            Style::new().white()
+        };
+        let revert_area = Rect::new(padding.x + 12, btn_y, 12, 1);
+        f.render_widget(Paragraph::new("[ Revert ]").style(revert_style), revert_area);
+        state.click_areas.push((ClickTarget::InstructButton(InstructButton::Revert), revert_area));
+    }
+}
+
 fn draw_migration_tab(f: &mut Frame, area: Rect, state: &mut State) {
     let block = Block::default()
         .title(" Migration ")
@@ -2796,6 +3160,58 @@ fn draw_claude_dialog(f: &mut Frame, area: Rect, state: &State) {
         .enumerate()
         .map(|(i, line)| {
             let line_num = state.claude_scroll as usize + i + 1;
+            Line::from(vec![
+                Span::styled(format!("{:4} ", line_num), Style::new().dark_gray()),
+                Span::raw(line),
+            ])
+        })
+        .collect();
+
+    let content_widget = if visible_lines.is_empty() && content.is_empty() {
+        Paragraph::new("(empty file)").style(Style::new().dark_gray().italic())
+    } else {
+        Paragraph::new(visible_lines).style(Style::new().white())
+    };
+    f.render_widget(content_widget, inner);
+}
+
+fn draw_instruct_dialog(f: &mut Frame, area: Rect, state: &State) {
+    let content = state.instruct_content();
+    let line_count = content.lines().count();
+
+    let dialog_width = area.width.saturating_sub(8).min(120);
+    let dialog_height = area.height.saturating_sub(6).min(40);
+    let dialog_area = center_rect(area, dialog_width, dialog_height);
+
+    f.render_widget(Clear, dialog_area);
+
+    let visible_height = dialog_height.saturating_sub(4);
+    let max_scroll = (line_count as u16).saturating_sub(visible_height);
+    let scroll_info = if max_scroll > 0 {
+        format!(
+            " (line {}/{}) ",
+            state.instruct_scroll + 1,
+            line_count
+        )
+    } else {
+        String::new()
+    };
+
+    let block = Block::default()
+        .title(format!(" INSTRUCT.md{} ", scroll_info))
+        .title_bottom(" Esc/Enter/q to close | ↑↓/jk scroll | PgUp/PgDn | Home/End ")
+        .borders(Borders::ALL)
+        .border_style(Style::new().cyan());
+    let inner = block.inner(dialog_area);
+    f.render_widget(block, dialog_area);
+
+    let visible_lines: Vec<Line> = content
+        .lines()
+        .skip(state.instruct_scroll as usize)
+        .take(inner.height as usize)
+        .enumerate()
+        .map(|(i, line)| {
+            let line_num = state.instruct_scroll as usize + i + 1;
             Line::from(vec![
                 Span::styled(format!("{:4} ", line_num), Style::new().dark_gray()),
                 Span::raw(line),
@@ -3181,12 +3597,17 @@ fn generate_claude_md(state: &State) -> String {
 
     // What this file is
     content.push_str("# CLAUDE.md - PostgreSQL Schema Migration Instructions\n\n");
+
+    // Reference to INSTRUCT.md at the top
+    content.push_str("**IMPORTANT: Also read `INSTRUCT.md` for additional instructions specific to this project.**\n\n");
+
     content.push_str("This file provides instructions for Claude to assist with PostgreSQL schema migrations.\n");
     content.push_str("It is auto-generated by `pgcmp init` and should be regenerated after pulling schemas.\n\n");
 
     // Project files and restrictions
     content.push_str("## Project Files\n\n");
     content.push_str("This project contains the following top-level items:\n\n");
+    content.push_str("- `INSTRUCT.md` - Extra instructions for Claude (read this first!)\n");
     content.push_str("- `MIGRATION.sql` - The SQL migration script you will edit\n");
     content.push_str("- `old.database/` - Schema extracted from the OLD database (current production state)\n");
     content.push_str("- `new.database/` - Schema extracted from the NEW database (target state to migrate to)\n\n");
@@ -3196,6 +3617,7 @@ fn generate_claude_md(state: &State) -> String {
 
     content.push_str("**IMPORTANT: You MUST NEVER read files other than those listed above.**\n");
     content.push_str("Do not read CONFIG.toml, CLAUDE.md, or any other files. Only read:\n");
+    content.push_str("- `INSTRUCT.md` (for extra project-specific instructions)\n");
     content.push_str("- `MIGRATION.sql` (to view/edit the migration script)\n");
     content.push_str("- Files under `old.database/` (to see current schema, e.g., `old.database/public.sql`)\n");
     content.push_str("- Files under `new.database/` (to see target schema, e.g., `new.database/public.sql`)\n\n");
