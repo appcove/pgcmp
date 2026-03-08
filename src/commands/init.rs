@@ -1,7 +1,7 @@
 use crate::App;
 use crate::cli::InitArgs;
-use crate::config::{Config, DbConfig, TlsMode};
-use crate::db::DbConnection;
+use crate::config::{Config, DatabaseType, DbConfig, TlsMode};
+use crate::db::postgres::DbConnection;
 use crate::memfs::MemFs;
 use crate::schema::{SchemaObject, group_by_schema, generate_schema_file};
 use crossterm::{
@@ -36,10 +36,10 @@ enum Tab {
     Claude,
     Instruct,
     Migration,
-    Git,
+    Setup,
 }
 
-const TABS: [Tab; 7] = [Tab::Git, Tab::NewDb, Tab::OldDb, Tab::Pull, Tab::Claude, Tab::Instruct, Tab::Migration];
+const TABS: [Tab; 7] = [Tab::Setup, Tab::NewDb, Tab::OldDb, Tab::Pull, Tab::Claude, Tab::Instruct, Tab::Migration];
 
 /// Default template for MIGRATION.sql files.
 /// Must start with BEGIN TRANSACTION and end with ROLLBACK for safety.
@@ -72,7 +72,7 @@ impl Tab {
             Tab::Claude => "Claude",
             Tab::Instruct => "Instruct",
             Tab::Migration => "Migration",
-            Tab::Git => "Git",
+            Tab::Setup => "Setup",
         }
     }
 
@@ -426,6 +426,7 @@ type ConnectionResult = Result<DbConfig, String>;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Focus {
     TabBar,
+    SetupDbType,
     DbField(Field),
     PullButton(PullButton),
     ClaudeButton(ClaudeButton),
@@ -440,6 +441,7 @@ struct State {
     app: &'static App,
     tab: Tab,
     focus: Focus,
+    database_type: DatabaseType,
     new_db: DbForm,
     old_db: DbForm,
     memfs: MemFs,
@@ -499,6 +501,7 @@ struct PullData {
 enum ClickTarget {
     Tab(Tab),
     Field(Tab, Field),
+    DbTypeOption(DatabaseType),
     TlsOption(Tab, TlsMode),
     PullButton(PullButton),
     ClaudeButton(ClaudeButton),
@@ -561,8 +564,9 @@ impl State {
 
         Self {
             app,
-            tab: Tab::Git,
+            tab: Tab::Setup,
             focus: Focus::TabBar,
+            database_type: config.database_type,
             new_db,
             old_db,
             memfs,
@@ -838,7 +842,7 @@ fn handle_dialog_event(evt: &Event, state: &mut State) -> anyhow::Result<bool> {
                             state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
                             state.dialog = None;
                         } else {
-                            save_all(&state.app, &mut state.new_db, &mut state.old_db, &state.memfs)?;
+                            save_all(&state.app, state.database_type, &mut state.new_db, &mut state.old_db, &state.memfs)?;
                             return Ok(true);
                         }
                     }
@@ -867,7 +871,7 @@ fn handle_dialog_event(evt: &Event, state: &mut State) -> anyhow::Result<bool> {
                             state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
                             state.dialog = None;
                         } else {
-                            save_all(&state.app, &mut state.new_db, &mut state.old_db, &state.memfs)?;
+                            save_all(&state.app, state.database_type, &mut state.new_db, &mut state.old_db, &state.memfs)?;
                             return Ok(true);
                         }
                     }
@@ -1433,6 +1437,20 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                 _ => {}
             }
         }
+        Focus::SetupDbType => {
+            match code {
+                KeyCode::Tab | KeyCode::Down => {
+                    state.focus = Focus::GitButton(GitButton::Init);
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    state.focus = Focus::TabBar;
+                }
+                KeyCode::Left | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                    state.database_type = state.database_type.toggle();
+                }
+                _ => {}
+            }
+        }
         Focus::GitButton(btn) => {
             match code {
                 KeyCode::Tab => {
@@ -1444,9 +1462,9 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                     }
                 }
                 KeyCode::BackTab => {
-                    // Cycle back through git buttons, then to tab bar
+                    // Cycle back through git buttons, then to db type
                     if btn == GitButton::Init {
-                        state.focus = Focus::TabBar;
+                        state.focus = Focus::SetupDbType;
                     } else {
                         state.focus = Focus::GitButton(btn.prev());
                     }
@@ -1455,7 +1473,7 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                     state.focus = Focus::BottomButton(BottomButton::Save);
                 }
                 KeyCode::Up => {
-                    state.focus = Focus::TabBar;
+                    state.focus = Focus::SetupDbType;
                 }
                 KeyCode::Left => {
                     state.focus = Focus::GitButton(btn.prev());
@@ -1500,7 +1518,7 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                             if !state.git_clean {
                                 state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
                             } else {
-                                save_all(&state.app, &mut state.new_db, &mut state.old_db, &state.memfs)?;
+                                save_all(&state.app, state.database_type, &mut state.new_db, &mut state.old_db, &state.memfs)?;
                                 state.should_exit = true;
                             }
                         }
@@ -1527,7 +1545,7 @@ fn default_focus_for_tab(tab: Tab) -> Focus {
         Tab::Claude => Focus::ClaudeButton(ClaudeButton::ViewContents),
         Tab::Instruct => Focus::InstructTextArea,
         Tab::Migration => Focus::MigrationButton(MigrationButton::ViewContents),
-        Tab::Git => Focus::GitButton(GitButton::Refresh),
+        Tab::Setup => Focus::SetupDbType,
     }
 }
 
@@ -1548,6 +1566,10 @@ fn handle_mouse_click(col: u16, row: u16, state: &mut State) -> anyhow::Result<(
             ClickTarget::Field(tab, field) => {
                 state.tab = tab;
                 state.focus = Focus::DbField(field);
+            }
+            ClickTarget::DbTypeOption(db_type) => {
+                state.focus = Focus::SetupDbType;
+                state.database_type = db_type;
             }
             ClickTarget::TlsOption(tab, mode) => {
                 state.tab = tab;
@@ -1638,7 +1660,7 @@ fn handle_mouse_click(col: u16, row: u16, state: &mut State) -> anyhow::Result<(
                         if !state.git_clean {
                             state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
                         } else {
-                            save_all(&state.app, &mut state.new_db, &mut state.old_db, &state.memfs)?;
+                            save_all(&state.app, state.database_type, &mut state.new_db, &mut state.old_db, &state.memfs)?;
                             state.should_exit = true;
                         }
                     }
@@ -1899,7 +1921,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting types...".into())).await;
-        match crate::db::types::extract_types(conn.client()).await {
+        match crate::db::postgres::types::extract_types(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract types: {}", e)))).await;
@@ -1909,7 +1931,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting tables...".into())).await;
-        match crate::db::tables::extract_tables(conn.client()).await {
+        match crate::db::postgres::tables::extract_tables(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract tables: {}", e)))).await;
@@ -1919,7 +1941,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting views...".into())).await;
-        match crate::db::views::extract_views(conn.client()).await {
+        match crate::db::postgres::views::extract_views(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract views: {}", e)))).await;
@@ -1929,7 +1951,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting materialized views...".into())).await;
-        match crate::db::views::extract_materialized_views(conn.client()).await {
+        match crate::db::postgres::views::extract_materialized_views(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract materialized views: {}", e)))).await;
@@ -1939,7 +1961,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting functions...".into())).await;
-        match crate::db::functions::extract_functions(conn.client()).await {
+        match crate::db::postgres::functions::extract_functions(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract functions: {}", e)))).await;
@@ -1949,7 +1971,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting indexes...".into())).await;
-        match crate::db::indexes::extract_indexes(conn.client()).await {
+        match crate::db::postgres::indexes::extract_indexes(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract indexes: {}", e)))).await;
@@ -1959,7 +1981,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting constraints...".into())).await;
-        match crate::db::constraints::extract_constraints(conn.client()).await {
+        match crate::db::postgres::constraints::extract_constraints(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract constraints: {}", e)))).await;
@@ -1969,7 +1991,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting triggers...".into())).await;
-        match crate::db::triggers::extract_triggers(conn.client()).await {
+        match crate::db::postgres::triggers::extract_triggers(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract triggers: {}", e)))).await;
@@ -1979,7 +2001,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("New DB: extracting sequences...".into())).await;
-        match crate::db::sequences::extract_sequences(conn.client()).await {
+        match crate::db::postgres::sequences::extract_sequences(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract sequences: {}", e)))).await;
@@ -2004,7 +2026,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting types...".into())).await;
-        match crate::db::types::extract_types(conn.client()).await {
+        match crate::db::postgres::types::extract_types(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract types: {}", e)))).await;
@@ -2014,7 +2036,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting tables...".into())).await;
-        match crate::db::tables::extract_tables(conn.client()).await {
+        match crate::db::postgres::tables::extract_tables(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract tables: {}", e)))).await;
@@ -2024,7 +2046,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting views...".into())).await;
-        match crate::db::views::extract_views(conn.client()).await {
+        match crate::db::postgres::views::extract_views(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract views: {}", e)))).await;
@@ -2034,7 +2056,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting materialized views...".into())).await;
-        match crate::db::views::extract_materialized_views(conn.client()).await {
+        match crate::db::postgres::views::extract_materialized_views(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract materialized views: {}", e)))).await;
@@ -2044,7 +2066,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting functions...".into())).await;
-        match crate::db::functions::extract_functions(conn.client()).await {
+        match crate::db::postgres::functions::extract_functions(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract functions: {}", e)))).await;
@@ -2054,7 +2076,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting indexes...".into())).await;
-        match crate::db::indexes::extract_indexes(conn.client()).await {
+        match crate::db::postgres::indexes::extract_indexes(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract indexes: {}", e)))).await;
@@ -2064,7 +2086,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting constraints...".into())).await;
-        match crate::db::constraints::extract_constraints(conn.client()).await {
+        match crate::db::postgres::constraints::extract_constraints(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract constraints: {}", e)))).await;
@@ -2074,7 +2096,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting triggers...".into())).await;
-        match crate::db::triggers::extract_triggers(conn.client()).await {
+        match crate::db::postgres::triggers::extract_triggers(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract triggers: {}", e)))).await;
@@ -2084,7 +2106,7 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx.send(PullMessage::Status("Old DB: extracting sequences...".into())).await;
-        match crate::db::sequences::extract_sequences(conn.client()).await {
+        match crate::db::postgres::sequences::extract_sequences(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
                 let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract sequences: {}", e)))).await;
@@ -2172,12 +2194,13 @@ fn poll_pull_task(state: &mut State) {
     }
 }
 
-fn save_all(app: &App, new_db: &mut DbForm, old_db: &mut DbForm, memfs: &MemFs) -> anyhow::Result<()> {
+fn save_all(app: &App, database_type: DatabaseType, new_db: &mut DbForm, old_db: &mut DbForm, memfs: &MemFs) -> anyhow::Result<()> {
     // Save config
     let new_config = new_db.to_config_partial();
     let old_config = old_db.to_config_partial();
 
     let config = Config {
+        database_type,
         new: Some(new_config.clone()),
         old: Some(old_config.clone()),
     };
@@ -2347,7 +2370,7 @@ fn tab_status(tab: Tab, state: &State) -> (&'static str, Style) {
                 ("○", Style::new().dark_gray())
             }
         }
-        Tab::Git => {
+        Tab::Setup => {
             if !state.has_git {
                 ("✗", Style::new().red())
             } else if state.git_clean {
@@ -2367,7 +2390,7 @@ fn draw_tab_content(f: &mut Frame, area: Rect, state: &mut State) {
         Tab::Claude => draw_claude_tab(f, area, state),
         Tab::Instruct => draw_instruct_tab(f, area, state),
         Tab::Migration => draw_migration_tab(f, area, state),
-        Tab::Git => draw_git_tab(f, area, state),
+        Tab::Setup => draw_setup_tab(f, area, state),
     }
 }
 
@@ -3268,9 +3291,9 @@ fn draw_pull_dialog(f: &mut Frame, area: Rect, state: &mut State) {
     );
 }
 
-fn draw_git_tab(f: &mut Frame, area: Rect, state: &mut State) {
+fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
     let block = Block::default()
-        .title(" Git Status ")
+        .title(" Setup ")
         .borders(Borders::ALL)
         .border_style(Style::new().dark_gray());
     let inner = block.inner(area);
@@ -3284,6 +3307,23 @@ fn draw_git_tab(f: &mut Frame, area: Rect, state: &mut State) {
     );
 
     let mut y = padding.y;
+
+    // Database Type toggle
+    if y < padding.y + padding.height {
+        let dbtype_area = Rect::new(padding.x, y, padding.width, 1);
+        let active = matches!(state.focus, Focus::SetupDbType);
+        draw_dbtype_toggle(f, dbtype_area, state.database_type, active, &mut state.click_areas);
+        y += 2;
+    }
+
+    // Separator label for Git section
+    if y < padding.y + padding.height {
+        f.render_widget(
+            Paragraph::new("── Git ──").style(Style::new().dark_gray()),
+            Rect::new(padding.x, y, padding.width, 1),
+        );
+        y += 1;
+    }
 
     // Get active button if any
     let active_btn = match state.focus {
@@ -3436,6 +3476,44 @@ fn draw_field(f: &mut Frame, area: Rect, label: &str, value: &str, active: bool)
         value.to_string()
     };
     f.render_widget(Paragraph::new(text).style(style), value_area);
+}
+
+fn draw_dbtype_toggle(
+    f: &mut Frame,
+    area: Rect,
+    current: DatabaseType,
+    active: bool,
+    clicks: &mut Vec<(ClickTarget, Rect)>,
+) {
+    let [label_area, options_area] =
+        Layout::horizontal([Constraint::Length(10), Constraint::Min(20)]).areas(area);
+
+    f.render_widget(
+        Paragraph::new("Type:").style(Style::new().bold()),
+        label_area,
+    );
+
+    let style = if active {
+        Style::new().cyan()
+    } else {
+        Style::new().white()
+    };
+
+    let mut x_offset = 0u16;
+    for db_type in DatabaseType::all() {
+        let selected = *db_type == current;
+        let label = db_type.display_str();
+        let text = if selected {
+            format!("● {}", label)
+        } else {
+            format!("○ {}", label)
+        };
+        let width = text.len() as u16;
+        let option_area = Rect::new(options_area.x + x_offset, options_area.y, width, 1);
+        f.render_widget(Paragraph::new(text).style(style), option_area);
+        clicks.push((ClickTarget::DbTypeOption(*db_type), option_area));
+        x_offset += width + 2;
+    }
 }
 
 fn draw_tls_toggle(

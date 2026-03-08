@@ -1,4 +1,4 @@
-use crate::db::DbConnection;
+use super::DbConnection;
 use anyhow::{bail, Context};
 use pg_query::protobuf::TransactionStmtKind;
 use std::fs;

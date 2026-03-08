@@ -7,6 +7,46 @@ const CONFIG_FILENAME: &str = "CONFIG.toml";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+pub enum DatabaseType {
+    #[default]
+    PostgreSQL,
+}
+
+impl DatabaseType {
+    pub fn display_str(&self) -> &'static str {
+        match self {
+            DatabaseType::PostgreSQL => "PostgreSQL",
+        }
+    }
+
+    pub fn toggle(&self) -> Self {
+        match self {
+            // Only one variant for now; will cycle through options when more are added
+            DatabaseType::PostgreSQL => DatabaseType::PostgreSQL,
+        }
+    }
+
+    pub fn all() -> &'static [DatabaseType] {
+        &[DatabaseType::PostgreSQL]
+    }
+
+    pub fn default_port(&self) -> u16 {
+        match self {
+            DatabaseType::PostgreSQL => 5432,
+        }
+    }
+}
+
+impl std::fmt::Display for DatabaseType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DatabaseType::PostgreSQL => write!(f, "postgresql"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TlsMode {
     #[default]
     Disable,
@@ -105,6 +145,8 @@ impl DbConfig {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    #[serde(default)]
+    pub database_type: DatabaseType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new: Option<DbConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

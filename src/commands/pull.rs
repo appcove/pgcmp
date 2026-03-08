@@ -1,7 +1,7 @@
 use crate::App;
 use crate::cli::PullArgs;
 use crate::config::Config;
-use crate::db::{DbConnection, SchemaExtractor};
+use crate::db::postgres::{DbConnection, SchemaExtractor};
 use crate::schema::write_objects_by_schema;
 use anyhow::Context;
 use std::fs;

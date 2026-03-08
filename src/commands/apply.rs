@@ -1,8 +1,8 @@
 use crate::App;
 use crate::cli::ApplyArgs;
 use crate::config::Config;
-use crate::db::DbConnection;
-use crate::migration::{
+use crate::db::postgres::DbConnection;
+use crate::db::postgres::migration::{
     execute_migration, load_and_validate_migration, print_commit_banner, print_rollback_banner,
 };
 use anyhow::Context;

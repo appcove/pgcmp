@@ -1,16 +1,16 @@
 use crate::App;
 use crate::cli::TestArgs;
 use crate::config::Config;
-use crate::db::DbConnection;
-use crate::db::constraints::fetch_constraints;
-use crate::db::functions::fetch_functions;
-use crate::db::indexes::fetch_indexes;
-use crate::db::sequences::fetch_sequences;
-use crate::db::tables::fetch_tables;
-use crate::db::triggers::fetch_triggers;
-use crate::db::types::fetch_types;
-use crate::db::views::{fetch_materialized_views, fetch_views};
-use crate::migration::{execute_migration_for_test, load_and_validate_migration};
+use crate::db::postgres::DbConnection;
+use crate::db::postgres::constraints::fetch_constraints;
+use crate::db::postgres::functions::fetch_functions;
+use crate::db::postgres::indexes::fetch_indexes;
+use crate::db::postgres::sequences::fetch_sequences;
+use crate::db::postgres::tables::fetch_tables;
+use crate::db::postgres::triggers::fetch_triggers;
+use crate::db::postgres::types::fetch_types;
+use crate::db::postgres::views::{fetch_materialized_views, fetch_views};
+use crate::db::postgres::migration::{execute_migration_for_test, load_and_validate_migration};
 use anyhow::Context;
 use std::collections::{HashMap, HashSet};
 
@@ -379,10 +379,10 @@ fn analyze_schemas(left: &HashSet<&str>, right: &HashSet<&str>) -> Vec<ObjectAna
 }
 
 fn analyze_types(
-    left: &[crate::db::types::TypeInfo],
-    right: &[crate::db::types::TypeInfo],
+    left: &[crate::db::postgres::types::TypeInfo],
+    right: &[crate::db::postgres::types::TypeInfo],
 ) -> Vec<ObjectAnalysis> {
-    use crate::db::types::TypeInfo;
+    use crate::db::postgres::types::TypeInfo;
 
     let left_map: HashMap<(&str, &str), &TypeInfo> = left
         .iter()
@@ -452,10 +452,10 @@ fn analyze_types(
 }
 
 fn compare_type_details(
-    left: &crate::db::types::TypeInfo,
-    right: &crate::db::types::TypeInfo,
+    left: &crate::db::postgres::types::TypeInfo,
+    right: &crate::db::postgres::types::TypeInfo,
 ) -> Vec<String> {
-    use crate::db::types::TypeKind;
+    use crate::db::postgres::types::TypeKind;
 
     let mut diffs = Vec::new();
 
@@ -561,10 +561,10 @@ fn compare_type_details(
 }
 
 fn analyze_tables(
-    left: &[crate::db::tables::TableInfo],
-    right: &[crate::db::tables::TableInfo],
+    left: &[crate::db::postgres::tables::TableInfo],
+    right: &[crate::db::postgres::tables::TableInfo],
 ) -> (Vec<ObjectAnalysis>, Vec<ObjectAnalysis>) {
-    use crate::db::tables::TableInfo;
+    use crate::db::postgres::tables::TableInfo;
 
     let left_map: HashMap<(&str, &str), &TableInfo> = left
         .iter()
@@ -610,10 +610,10 @@ fn analyze_tables(
 }
 
 fn analyze_columns(
-    left_table: &crate::db::tables::TableInfo,
-    right_table: &crate::db::tables::TableInfo,
+    left_table: &crate::db::postgres::tables::TableInfo,
+    right_table: &crate::db::postgres::tables::TableInfo,
 ) -> Vec<ObjectAnalysis> {
-    use crate::db::tables::ColumnInfo;
+    use crate::db::postgres::tables::ColumnInfo;
 
     let left_map: HashMap<&str, &ColumnInfo> = left_table
         .columns
@@ -679,8 +679,8 @@ fn analyze_columns(
 }
 
 fn get_column_modifications(
-    left: &crate::db::tables::ColumnInfo,
-    right: &crate::db::tables::ColumnInfo,
+    left: &crate::db::postgres::tables::ColumnInfo,
+    right: &crate::db::postgres::tables::ColumnInfo,
 ) -> Vec<String> {
     let mut mods = Vec::new();
 
@@ -702,7 +702,7 @@ fn get_column_modifications(
     mods
 }
 
-fn format_column_spec(col: &crate::db::tables::ColumnInfo) -> String {
+fn format_column_spec(col: &crate::db::postgres::tables::ColumnInfo) -> String {
     let mut parts = vec![col.data_type.clone()];
     parts.push(if col.is_nullable { "null" } else { "not null" }.to_string());
     if let Some(ref default) = col.column_default {
@@ -712,11 +712,11 @@ fn format_column_spec(col: &crate::db::tables::ColumnInfo) -> String {
 }
 
 fn analyze_views(
-    left: &[crate::db::views::ViewInfo],
-    right: &[crate::db::views::ViewInfo],
+    left: &[crate::db::postgres::views::ViewInfo],
+    right: &[crate::db::postgres::views::ViewInfo],
     is_materialized: bool,
 ) -> Vec<ObjectAnalysis> {
-    use crate::db::views::ViewInfo;
+    use crate::db::postgres::views::ViewInfo;
 
     let type_name = if is_materialized { "materialized view" } else { "view" };
 
@@ -775,10 +775,10 @@ fn analyze_views(
 }
 
 fn analyze_functions(
-    left: &[crate::db::functions::FunctionInfo],
-    right: &[crate::db::functions::FunctionInfo],
+    left: &[crate::db::postgres::functions::FunctionInfo],
+    right: &[crate::db::postgres::functions::FunctionInfo],
 ) -> Vec<ObjectAnalysis> {
-    use crate::db::functions::FunctionInfo;
+    use crate::db::postgres::functions::FunctionInfo;
 
     let left_map: HashMap<(&str, &str), &FunctionInfo> = left
         .iter()
@@ -834,10 +834,10 @@ fn normalize_function_def(def: &str) -> String {
 }
 
 fn analyze_indexes(
-    left: &[crate::db::indexes::IndexInfo],
-    right: &[crate::db::indexes::IndexInfo],
+    left: &[crate::db::postgres::indexes::IndexInfo],
+    right: &[crate::db::postgres::indexes::IndexInfo],
 ) -> Vec<ObjectAnalysis> {
-    use crate::db::indexes::IndexInfo;
+    use crate::db::postgres::indexes::IndexInfo;
 
     let left_map: HashMap<(&str, &str), &IndexInfo> = left
         .iter()
@@ -891,10 +891,10 @@ fn analyze_indexes(
 }
 
 fn analyze_constraints(
-    left: &[crate::db::constraints::ConstraintInfo],
-    right: &[crate::db::constraints::ConstraintInfo],
+    left: &[crate::db::postgres::constraints::ConstraintInfo],
+    right: &[crate::db::postgres::constraints::ConstraintInfo],
 ) -> Vec<ObjectAnalysis> {
-    use crate::db::constraints::ConstraintInfo;
+    use crate::db::postgres::constraints::ConstraintInfo;
 
     let left_map: HashMap<(&str, &str, &str), &ConstraintInfo> = left
         .iter()
@@ -981,10 +981,10 @@ fn normalize_constraint_definition(def: &str) -> String {
 }
 
 fn analyze_triggers(
-    left: &[crate::db::triggers::TriggerInfo],
-    right: &[crate::db::triggers::TriggerInfo],
+    left: &[crate::db::postgres::triggers::TriggerInfo],
+    right: &[crate::db::postgres::triggers::TriggerInfo],
 ) -> Vec<ObjectAnalysis> {
-    use crate::db::triggers::TriggerInfo;
+    use crate::db::postgres::triggers::TriggerInfo;
 
     let left_map: HashMap<(&str, &str), &TriggerInfo> = left
         .iter()
@@ -1052,10 +1052,10 @@ fn normalize_trigger_def(def: &str) -> String {
 }
 
 fn analyze_sequences(
-    left: &[crate::db::sequences::SequenceInfo],
-    right: &[crate::db::sequences::SequenceInfo],
+    left: &[crate::db::postgres::sequences::SequenceInfo],
+    right: &[crate::db::postgres::sequences::SequenceInfo],
 ) -> Vec<ObjectAnalysis> {
-    use crate::db::sequences::SequenceInfo;
+    use crate::db::postgres::sequences::SequenceInfo;
 
     let left_map: HashMap<(&str, &str), &SequenceInfo> = left
         .iter()
@@ -1107,8 +1107,8 @@ fn analyze_sequences(
 }
 
 fn get_sequence_modifications(
-    left: &crate::db::sequences::SequenceInfo,
-    right: &crate::db::sequences::SequenceInfo,
+    left: &crate::db::postgres::sequences::SequenceInfo,
+    right: &crate::db::postgres::sequences::SequenceInfo,
 ) -> Vec<String> {
     let mut mods = Vec::new();
 
