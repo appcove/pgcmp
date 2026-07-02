@@ -66,10 +66,7 @@ pub async fn run_diff(app: &'static App, _args: DiffArgs) -> anyhow::Result<()> 
 }
 
 async fn get_postgres_version(conn: &DbConnection) -> anyhow::Result<String> {
-    let row = conn
-        .client()
-        .query_one("SHOW server_version", &[])
-        .await?;
+    let row = conn.client().query_one("SHOW server_version", &[]).await?;
     let version: String = row.get(0);
     // Extract major version (e.g., "15.4" -> "15")
     let major = version.split('.').next().unwrap_or(&version);
@@ -95,7 +92,7 @@ impl SummaryRow {
 
 /// Analysis result for a single object
 struct ObjectAnalysis {
-    name: String,           // Full qualified name
+    name: String, // Full qualified name
     action_description: String,
     modification_detail: Option<String>,
 }
@@ -175,8 +172,10 @@ async fn analyze_databases(
     let (left_indexes, right_indexes) =
         tokio::try_join!(fetch_indexes(left_client), fetch_indexes(right_client))?;
 
-    let (left_constraints, right_constraints) =
-        tokio::try_join!(fetch_constraints(left_client), fetch_constraints(right_client))?;
+    let (left_constraints, right_constraints) = tokio::try_join!(
+        fetch_constraints(left_client),
+        fetch_constraints(right_client)
+    )?;
 
     let (left_triggers, right_triggers) =
         tokio::try_join!(fetch_triggers(left_client), fetch_triggers(right_client))?;
@@ -189,7 +188,10 @@ async fn analyze_databases(
 
     // Extract schemas from tables
     let left_schemas: HashSet<&str> = left_tables.iter().map(|t| t.schema_name.as_str()).collect();
-    let right_schemas: HashSet<&str> = right_tables.iter().map(|t| t.schema_name.as_str()).collect();
+    let right_schemas: HashSet<&str> = right_tables
+        .iter()
+        .map(|t| t.schema_name.as_str())
+        .collect();
 
     // Build summary
     let summary = vec![
@@ -420,7 +422,10 @@ fn compare_type_details(
             // Check for removed enum values
             for label in &right.enum_labels {
                 if !left.enum_labels.contains(label) {
-                    diffs.push(format!("remove enum value '{}' (requires recreating type)", label));
+                    diffs.push(format!(
+                        "remove enum value '{}' (requires recreating type)",
+                        label
+                    ));
                 }
             }
         }
@@ -532,7 +537,10 @@ fn analyze_tables(
             // Table only in left - ADD
             tables.push(ObjectAnalysis {
                 name: full_name,
-                action_description: format!("create table {}.{}", table.schema_name, table.table_name),
+                action_description: format!(
+                    "create table {}.{}",
+                    table.schema_name, table.table_name
+                ),
                 modification_detail: None,
             });
         }
@@ -544,7 +552,10 @@ fn analyze_tables(
         if !left_map.contains_key(&key) {
             tables.push(ObjectAnalysis {
                 name: format!("{}.{}", table.schema_name, table.table_name),
-                action_description: format!("drop table {}.{}", table.schema_name, table.table_name),
+                action_description: format!(
+                    "drop table {}.{}",
+                    table.schema_name, table.table_name
+                ),
                 modification_detail: None,
             });
         }
@@ -575,7 +586,10 @@ fn analyze_columns(
 
     // Check columns in left
     for col in &left_table.columns {
-        let full_name = format!("{}.{}.{}", left_table.schema_name, left_table.table_name, col.name);
+        let full_name = format!(
+            "{}.{}.{}",
+            left_table.schema_name, left_table.table_name, col.name
+        );
 
         if let Some(right_col) = right_map.get(col.name.as_str()) {
             // Column exists in both - check for modifications
@@ -613,7 +627,10 @@ fn analyze_columns(
     for col in &right_table.columns {
         if !left_map.contains_key(col.name.as_str()) {
             result.push(ObjectAnalysis {
-                name: format!("{}.{}.{}", right_table.schema_name, right_table.table_name, col.name),
+                name: format!(
+                    "{}.{}.{}",
+                    right_table.schema_name, right_table.table_name, col.name
+                ),
                 action_description: format!(
                     "drop column {}.{}.{}",
                     right_table.schema_name, right_table.table_name, col.name
@@ -636,7 +653,11 @@ fn get_column_modifications(
         mods.push(format!("type: {} -> {}", right.data_type, left.data_type));
     }
     if left.is_nullable != right.is_nullable {
-        let old_null = if right.is_nullable { "null" } else { "not null" };
+        let old_null = if right.is_nullable {
+            "null"
+        } else {
+            "not null"
+        };
         let new_null = if left.is_nullable { "null" } else { "not null" };
         mods.push(format!("nullable: {} -> {}", old_null, new_null));
     }
@@ -701,7 +722,10 @@ fn analyze_views(
                 );
                 result.push(ObjectAnalysis {
                     name: full_name,
-                    action_description: format!("replace {} {}.{}", type_name, view.schema_name, view.view_name),
+                    action_description: format!(
+                        "replace {} {}.{}",
+                        type_name, view.schema_name, view.view_name
+                    ),
                     modification_detail: Some(detail),
                 });
             }
@@ -709,7 +733,10 @@ fn analyze_views(
             // View only in left - ADD
             result.push(ObjectAnalysis {
                 name: full_name,
-                action_description: format!("create {} {}.{}", type_name, view.schema_name, view.view_name),
+                action_description: format!(
+                    "create {} {}.{}",
+                    type_name, view.schema_name, view.view_name
+                ),
                 modification_detail: None,
             });
         }
@@ -721,7 +748,10 @@ fn analyze_views(
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
                 name: format!("{}.{}", view.schema_name, view.view_name),
-                action_description: format!("drop {} {}.{}", type_name, view.schema_name, view.view_name),
+                action_description: format!(
+                    "drop {} {}.{}",
+                    type_name, view.schema_name, view.view_name
+                ),
                 modification_detail: None,
             });
         }
@@ -758,13 +788,13 @@ fn analyze_functions(
             let left_def = normalize_function_def(&func.definition);
             let right_def = normalize_function_def(&right_func.definition);
             if left_def != right_def {
-                let detail = format!(
-                    "replace function {}\n  definition changed",
-                    full_name
-                );
+                let detail = format!("replace function {}\n  definition changed", full_name);
                 result.push(ObjectAnalysis {
                     name: full_name,
-                    action_description: format!("replace function {}.{}", func.schema_name, func.function_name),
+                    action_description: format!(
+                        "replace function {}.{}",
+                        func.schema_name, func.function_name
+                    ),
                     modification_detail: Some(detail),
                 });
             }
@@ -772,7 +802,10 @@ fn analyze_functions(
             // Function only in left - ADD
             result.push(ObjectAnalysis {
                 name: full_name,
-                action_description: format!("create function {}.{}", func.schema_name, func.function_name),
+                action_description: format!(
+                    "create function {}.{}",
+                    func.schema_name, func.function_name
+                ),
                 modification_detail: None,
             });
         }
@@ -784,7 +817,10 @@ fn analyze_functions(
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
                 name: format!("{}.{}", func.schema_name, func.function_name),
-                action_description: format!("drop function {}.{}", func.schema_name, func.function_name),
+                action_description: format!(
+                    "drop function {}.{}",
+                    func.schema_name, func.function_name
+                ),
                 modification_detail: None,
             });
         }
@@ -825,13 +861,14 @@ fn analyze_indexes(
             if idx.definition != right_idx.definition {
                 let detail = format!(
                     "recreate index {}\n  old: {}\n  new: {}",
-                    full_name,
-                    right_idx.definition,
-                    idx.definition
+                    full_name, right_idx.definition, idx.definition
                 );
                 result.push(ObjectAnalysis {
                     name: full_name,
-                    action_description: format!("recreate index {}.{}", idx.schema_name, idx.index_name),
+                    action_description: format!(
+                        "recreate index {}.{}",
+                        idx.schema_name, idx.index_name
+                    ),
                     modification_detail: Some(detail),
                 });
             }
@@ -903,7 +940,10 @@ fn analyze_constraints(
             con.table_name.as_str(),
             con.constraint_name.as_str(),
         );
-        let full_name = format!("{}.{}.{}", con.schema_name, con.table_name, con.constraint_name);
+        let full_name = format!(
+            "{}.{}.{}",
+            con.schema_name, con.table_name, con.constraint_name
+        );
 
         if let Some(right_con) = right_map.get(&key) {
             // Constraint exists in both - check for modifications using normalized comparison
@@ -912,9 +952,7 @@ fn analyze_constraints(
             if left_def != right_def {
                 let detail = format!(
                     "replace constraint {}\n  old: {}\n  new: {}",
-                    full_name,
-                    right_con.definition,
-                    con.definition
+                    full_name, right_con.definition, con.definition
                 );
                 result.push(ObjectAnalysis {
                     name: full_name,
@@ -947,7 +985,10 @@ fn analyze_constraints(
         );
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
-                name: format!("{}.{}.{}", con.schema_name, con.table_name, con.constraint_name),
+                name: format!(
+                    "{}.{}.{}",
+                    con.schema_name, con.table_name, con.constraint_name
+                ),
                 action_description: format!(
                     "drop constraint {}.{}.{}",
                     con.schema_name, con.table_name, con.constraint_name
@@ -1008,17 +1049,17 @@ fn analyze_triggers(
     // Check triggers in left
     for trig in left {
         let key = (trig.schema_name.as_str(), trig.trigger_name.as_str());
-        let full_name = format!("{}.{}.{}", trig.schema_name, trig.table_name, trig.trigger_name);
+        let full_name = format!(
+            "{}.{}.{}",
+            trig.schema_name, trig.table_name, trig.trigger_name
+        );
 
         if let Some(right_trig) = right_map.get(&key) {
             // Trigger exists in both - check for modifications
             let left_def = normalize_trigger_def(&trig.definition);
             let right_def = normalize_trigger_def(&right_trig.definition);
             if left_def != right_def {
-                let detail = format!(
-                    "replace trigger {}\n  definition changed",
-                    full_name
-                );
+                let detail = format!("replace trigger {}\n  definition changed", full_name);
                 result.push(ObjectAnalysis {
                     name: full_name,
                     action_description: format!(
@@ -1046,7 +1087,10 @@ fn analyze_triggers(
         let key = (trig.schema_name.as_str(), trig.trigger_name.as_str());
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
-                name: format!("{}.{}.{}", trig.schema_name, trig.table_name, trig.trigger_name),
+                name: format!(
+                    "{}.{}.{}",
+                    trig.schema_name, trig.table_name, trig.trigger_name
+                ),
                 action_description: format!(
                     "drop trigger {}.{}.{}",
                     trig.schema_name, trig.table_name, trig.trigger_name
@@ -1093,14 +1137,13 @@ fn analyze_sequences(
             // Sequence exists in both - check for modifications
             let mods = get_sequence_modifications(seq, right_seq);
             if !mods.is_empty() {
-                let detail = format!(
-                    "alter sequence {}\n  {}",
-                    full_name,
-                    mods.join("\n  ")
-                );
+                let detail = format!("alter sequence {}\n  {}", full_name, mods.join("\n  "));
                 result.push(ObjectAnalysis {
                     name: full_name,
-                    action_description: format!("alter sequence {}.{}", seq.schema_name, seq.sequence_name),
+                    action_description: format!(
+                        "alter sequence {}.{}",
+                        seq.schema_name, seq.sequence_name
+                    ),
                     modification_detail: Some(detail),
                 });
             }
@@ -1108,7 +1151,10 @@ fn analyze_sequences(
             // Sequence only in left - ADD
             result.push(ObjectAnalysis {
                 name: full_name,
-                action_description: format!("create sequence {}.{}", seq.schema_name, seq.sequence_name),
+                action_description: format!(
+                    "create sequence {}.{}",
+                    seq.schema_name, seq.sequence_name
+                ),
                 modification_detail: None,
             });
         }
@@ -1120,7 +1166,10 @@ fn analyze_sequences(
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
                 name: format!("{}.{}", seq.schema_name, seq.sequence_name),
-                action_description: format!("drop sequence {}.{}", seq.schema_name, seq.sequence_name),
+                action_description: format!(
+                    "drop sequence {}.{}",
+                    seq.schema_name, seq.sequence_name
+                ),
                 modification_detail: None,
             });
         }
@@ -1139,10 +1188,16 @@ fn get_sequence_modifications(
         mods.push(format!("type: {} -> {}", right.data_type, left.data_type));
     }
     if left.start_value != right.start_value {
-        mods.push(format!("start: {} -> {}", right.start_value, left.start_value));
+        mods.push(format!(
+            "start: {} -> {}",
+            right.start_value, left.start_value
+        ));
     }
     if left.increment_by != right.increment_by {
-        mods.push(format!("increment: {} -> {}", right.increment_by, left.increment_by));
+        mods.push(format!(
+            "increment: {} -> {}",
+            right.increment_by, left.increment_by
+        ));
     }
     if left.min_value != right.min_value {
         mods.push(format!("min: {} -> {}", right.min_value, left.min_value));
@@ -1209,8 +1264,14 @@ fn generate_xml(
     for row in &analysis.summary {
         xml.push_str("    <item>\n");
         xml.push_str(&format!("      <type>{}</type>\n", row.object_type));
-        xml.push_str(&format!("      <left_count>{}</left_count>\n", row.left_count));
-        xml.push_str(&format!("      <right_count>{}</right_count>\n", row.right_count));
+        xml.push_str(&format!(
+            "      <left_count>{}</left_count>\n",
+            row.left_count
+        ));
+        xml.push_str(&format!(
+            "      <right_count>{}</right_count>\n",
+            row.right_count
+        ));
         xml.push_str(&format!(
             "      <different>{}</different>\n",
             row.is_different().to_string().to_lowercase()
@@ -1235,7 +1296,12 @@ fn generate_xml(
     write_object_section(&mut xml, "views", "view", &analysis.views);
 
     // Materialized views section
-    write_object_section(&mut xml, "materialized_views", "materialized_view", &analysis.materialized_views);
+    write_object_section(
+        &mut xml,
+        "materialized_views",
+        "materialized_view",
+        &analysis.materialized_views,
+    );
 
     // Functions section
     write_object_section(&mut xml, "functions", "function", &analysis.functions);
@@ -1263,12 +1329,20 @@ fn generate_xml(
     xml
 }
 
-fn write_object_section(xml: &mut String, section_name: &str, item_name: &str, objects: &[ObjectAnalysis]) {
+fn write_object_section(
+    xml: &mut String,
+    section_name: &str,
+    item_name: &str,
+    objects: &[ObjectAnalysis],
+) {
     xml.push_str(&format!("  <{}>\n", section_name));
     for obj in objects {
         xml.push_str(&format!("    <{}>\n", item_name));
         xml.push_str(&format!("      <name>{}</name>\n", xml_escape(&obj.name)));
-        xml.push_str(&format!("      <action>{}</action>\n", xml_escape(&obj.action_description)));
+        xml.push_str(&format!(
+            "      <action>{}</action>\n",
+            xml_escape(&obj.action_description)
+        ));
         if let Some(ref detail) = obj.modification_detail {
             xml.push_str(&format!("      <detail>{}</detail>\n", xml_escape(detail)));
         }

@@ -5,12 +5,12 @@ use crate::db::postgres::DbConnection;
 use crate::db::postgres::constraints::fetch_constraints;
 use crate::db::postgres::functions::fetch_functions;
 use crate::db::postgres::indexes::fetch_indexes;
+use crate::db::postgres::migration::{execute_migration_for_test, load_and_validate_migration};
 use crate::db::postgres::sequences::fetch_sequences;
 use crate::db::postgres::tables::fetch_tables;
 use crate::db::postgres::triggers::fetch_triggers;
 use crate::db::postgres::types::fetch_types;
 use crate::db::postgres::views::{fetch_materialized_views, fetch_views};
-use crate::db::postgres::migration::{execute_migration_for_test, load_and_validate_migration};
 use anyhow::Context;
 use std::collections::{HashMap, HashSet};
 
@@ -99,10 +99,7 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
 }
 
 async fn get_postgres_version(conn: &DbConnection) -> anyhow::Result<String> {
-    let row = conn
-        .client()
-        .query_one("SHOW server_version", &[])
-        .await?;
+    let row = conn.client().query_one("SHOW server_version", &[]).await?;
     let version: String = row.get(0);
     let major = version.split('.').next().unwrap_or(&version);
     Ok(major.to_string())
@@ -253,8 +250,10 @@ async fn analyze_databases(
     let (left_indexes, right_indexes) =
         tokio::try_join!(fetch_indexes(left_client), fetch_indexes(right_client))?;
 
-    let (left_constraints, right_constraints) =
-        tokio::try_join!(fetch_constraints(left_client), fetch_constraints(right_client))?;
+    let (left_constraints, right_constraints) = tokio::try_join!(
+        fetch_constraints(left_client),
+        fetch_constraints(right_client)
+    )?;
 
     let (left_triggers, right_triggers) =
         tokio::try_join!(fetch_triggers(left_client), fetch_triggers(right_client))?;
@@ -267,7 +266,10 @@ async fn analyze_databases(
 
     // Extract schemas from tables
     let left_schemas: HashSet<&str> = left_tables.iter().map(|t| t.schema_name.as_str()).collect();
-    let right_schemas: HashSet<&str> = right_tables.iter().map(|t| t.schema_name.as_str()).collect();
+    let right_schemas: HashSet<&str> = right_tables
+        .iter()
+        .map(|t| t.schema_name.as_str())
+        .collect();
 
     // Build summary
     let summary = vec![
@@ -480,7 +482,10 @@ fn compare_type_details(
             // Check for removed enum values
             for label in &right.enum_labels {
                 if !left.enum_labels.contains(label) {
-                    diffs.push(format!("remove enum value '{}' (requires recreating type)", label));
+                    diffs.push(format!(
+                        "remove enum value '{}' (requires recreating type)",
+                        label
+                    ));
                 }
             }
         }
@@ -589,7 +594,10 @@ fn analyze_tables(
         } else {
             tables.push(ObjectAnalysis {
                 name: full_name,
-                action_description: format!("create table {}.{}", table.schema_name, table.table_name),
+                action_description: format!(
+                    "create table {}.{}",
+                    table.schema_name, table.table_name
+                ),
                 modification_detail: None,
             });
         }
@@ -600,7 +608,10 @@ fn analyze_tables(
         if !left_map.contains_key(&key) {
             tables.push(ObjectAnalysis {
                 name: format!("{}.{}", table.schema_name, table.table_name),
-                action_description: format!("drop table {}.{}", table.schema_name, table.table_name),
+                action_description: format!(
+                    "drop table {}.{}",
+                    table.schema_name, table.table_name
+                ),
                 modification_detail: None,
             });
         }
@@ -630,7 +641,10 @@ fn analyze_columns(
     let mut result = Vec::new();
 
     for col in &left_table.columns {
-        let full_name = format!("{}.{}.{}", left_table.schema_name, left_table.table_name, col.name);
+        let full_name = format!(
+            "{}.{}.{}",
+            left_table.schema_name, left_table.table_name, col.name
+        );
 
         if let Some(right_col) = right_map.get(col.name.as_str()) {
             let mods = get_column_modifications(col, right_col);
@@ -665,7 +679,10 @@ fn analyze_columns(
     for col in &right_table.columns {
         if !left_map.contains_key(col.name.as_str()) {
             result.push(ObjectAnalysis {
-                name: format!("{}.{}.{}", right_table.schema_name, right_table.table_name, col.name),
+                name: format!(
+                    "{}.{}.{}",
+                    right_table.schema_name, right_table.table_name, col.name
+                ),
                 action_description: format!(
                     "drop column {}.{}.{}",
                     right_table.schema_name, right_table.table_name, col.name
@@ -688,7 +705,11 @@ fn get_column_modifications(
         mods.push(format!("type: {} -> {}", right.data_type, left.data_type));
     }
     if left.is_nullable != right.is_nullable {
-        let old_null = if right.is_nullable { "null" } else { "not null" };
+        let old_null = if right.is_nullable {
+            "null"
+        } else {
+            "not null"
+        };
         let new_null = if left.is_nullable { "null" } else { "not null" };
         mods.push(format!("nullable: {} -> {}", old_null, new_null));
     }
@@ -718,7 +739,11 @@ fn analyze_views(
 ) -> Vec<ObjectAnalysis> {
     use crate::db::postgres::views::ViewInfo;
 
-    let type_name = if is_materialized { "materialized view" } else { "view" };
+    let type_name = if is_materialized {
+        "materialized view"
+    } else {
+        "view"
+    };
 
     let left_map: HashMap<(&str, &str), &ViewInfo> = left
         .iter()
@@ -747,14 +772,20 @@ fn analyze_views(
                 );
                 result.push(ObjectAnalysis {
                     name: full_name,
-                    action_description: format!("replace {} {}.{}", type_name, view.schema_name, view.view_name),
+                    action_description: format!(
+                        "replace {} {}.{}",
+                        type_name, view.schema_name, view.view_name
+                    ),
                     modification_detail: Some(detail),
                 });
             }
         } else {
             result.push(ObjectAnalysis {
                 name: full_name,
-                action_description: format!("create {} {}.{}", type_name, view.schema_name, view.view_name),
+                action_description: format!(
+                    "create {} {}.{}",
+                    type_name, view.schema_name, view.view_name
+                ),
                 modification_detail: None,
             });
         }
@@ -765,7 +796,10 @@ fn analyze_views(
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
                 name: format!("{}.{}", view.schema_name, view.view_name),
-                action_description: format!("drop {} {}.{}", type_name, view.schema_name, view.view_name),
+                action_description: format!(
+                    "drop {} {}.{}",
+                    type_name, view.schema_name, view.view_name
+                ),
                 modification_detail: None,
             });
         }
@@ -802,14 +836,23 @@ fn analyze_functions(
             if left_def != right_def {
                 result.push(ObjectAnalysis {
                     name: full_name.clone(),
-                    action_description: format!("replace function {}.{}", func.schema_name, func.function_name),
-                    modification_detail: Some(format!("replace function {}\n  definition changed", full_name)),
+                    action_description: format!(
+                        "replace function {}.{}",
+                        func.schema_name, func.function_name
+                    ),
+                    modification_detail: Some(format!(
+                        "replace function {}\n  definition changed",
+                        full_name
+                    )),
                 });
             }
         } else {
             result.push(ObjectAnalysis {
                 name: full_name,
-                action_description: format!("create function {}.{}", func.schema_name, func.function_name),
+                action_description: format!(
+                    "create function {}.{}",
+                    func.schema_name, func.function_name
+                ),
                 modification_detail: None,
             });
         }
@@ -820,7 +863,10 @@ fn analyze_functions(
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
                 name: format!("{}.{}", func.schema_name, func.function_name),
-                action_description: format!("drop function {}.{}", func.schema_name, func.function_name),
+                action_description: format!(
+                    "drop function {}.{}",
+                    func.schema_name, func.function_name
+                ),
                 modification_detail: None,
             });
         }
@@ -863,7 +909,10 @@ fn analyze_indexes(
                 );
                 result.push(ObjectAnalysis {
                     name: full_name,
-                    action_description: format!("recreate index {}.{}", idx.schema_name, idx.index_name),
+                    action_description: format!(
+                        "recreate index {}.{}",
+                        idx.schema_name, idx.index_name
+                    ),
                     modification_detail: Some(detail),
                 });
             }
@@ -898,19 +947,44 @@ fn analyze_constraints(
 
     let left_map: HashMap<(&str, &str, &str), &ConstraintInfo> = left
         .iter()
-        .map(|c| ((c.schema_name.as_str(), c.table_name.as_str(), c.constraint_name.as_str()), c))
+        .map(|c| {
+            (
+                (
+                    c.schema_name.as_str(),
+                    c.table_name.as_str(),
+                    c.constraint_name.as_str(),
+                ),
+                c,
+            )
+        })
         .collect();
 
     let right_map: HashMap<(&str, &str, &str), &ConstraintInfo> = right
         .iter()
-        .map(|c| ((c.schema_name.as_str(), c.table_name.as_str(), c.constraint_name.as_str()), c))
+        .map(|c| {
+            (
+                (
+                    c.schema_name.as_str(),
+                    c.table_name.as_str(),
+                    c.constraint_name.as_str(),
+                ),
+                c,
+            )
+        })
         .collect();
 
     let mut result = Vec::new();
 
     for con in left {
-        let key = (con.schema_name.as_str(), con.table_name.as_str(), con.constraint_name.as_str());
-        let full_name = format!("{}.{}.{}", con.schema_name, con.table_name, con.constraint_name);
+        let key = (
+            con.schema_name.as_str(),
+            con.table_name.as_str(),
+            con.constraint_name.as_str(),
+        );
+        let full_name = format!(
+            "{}.{}.{}",
+            con.schema_name, con.table_name, con.constraint_name
+        );
 
         if let Some(right_con) = right_map.get(&key) {
             let left_def = normalize_constraint_definition(&con.definition);
@@ -942,10 +1016,17 @@ fn analyze_constraints(
     }
 
     for con in right {
-        let key = (con.schema_name.as_str(), con.table_name.as_str(), con.constraint_name.as_str());
+        let key = (
+            con.schema_name.as_str(),
+            con.table_name.as_str(),
+            con.constraint_name.as_str(),
+        );
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
-                name: format!("{}.{}.{}", con.schema_name, con.table_name, con.constraint_name),
+                name: format!(
+                    "{}.{}.{}",
+                    con.schema_name, con.table_name, con.constraint_name
+                ),
                 action_description: format!(
                     "drop constraint {}.{}.{}",
                     con.schema_name, con.table_name, con.constraint_name
@@ -1000,7 +1081,10 @@ fn analyze_triggers(
 
     for trig in left {
         let key = (trig.schema_name.as_str(), trig.trigger_name.as_str());
-        let full_name = format!("{}.{}.{}", trig.schema_name, trig.table_name, trig.trigger_name);
+        let full_name = format!(
+            "{}.{}.{}",
+            trig.schema_name, trig.table_name, trig.trigger_name
+        );
 
         if let Some(right_trig) = right_map.get(&key) {
             let left_def = normalize_trigger_def(&trig.definition);
@@ -1012,7 +1096,10 @@ fn analyze_triggers(
                         "replace trigger {}.{}.{}",
                         trig.schema_name, trig.table_name, trig.trigger_name
                     ),
-                    modification_detail: Some(format!("replace trigger {}\n  definition changed", full_name)),
+                    modification_detail: Some(format!(
+                        "replace trigger {}\n  definition changed",
+                        full_name
+                    )),
                 });
             }
         } else {
@@ -1031,7 +1118,10 @@ fn analyze_triggers(
         let key = (trig.schema_name.as_str(), trig.trigger_name.as_str());
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
-                name: format!("{}.{}.{}", trig.schema_name, trig.table_name, trig.trigger_name),
+                name: format!(
+                    "{}.{}.{}",
+                    trig.schema_name, trig.table_name, trig.trigger_name
+                ),
                 action_description: format!(
                     "drop trigger {}.{}.{}",
                     trig.schema_name, trig.table_name, trig.trigger_name
@@ -1079,14 +1169,20 @@ fn analyze_sequences(
                 let detail = format!("alter sequence {}\n  {}", full_name, mods.join("\n  "));
                 result.push(ObjectAnalysis {
                     name: full_name,
-                    action_description: format!("alter sequence {}.{}", seq.schema_name, seq.sequence_name),
+                    action_description: format!(
+                        "alter sequence {}.{}",
+                        seq.schema_name, seq.sequence_name
+                    ),
                     modification_detail: Some(detail),
                 });
             }
         } else {
             result.push(ObjectAnalysis {
                 name: full_name,
-                action_description: format!("create sequence {}.{}", seq.schema_name, seq.sequence_name),
+                action_description: format!(
+                    "create sequence {}.{}",
+                    seq.schema_name, seq.sequence_name
+                ),
                 modification_detail: None,
             });
         }
@@ -1097,7 +1193,10 @@ fn analyze_sequences(
         if !left_map.contains_key(&key) {
             result.push(ObjectAnalysis {
                 name: format!("{}.{}", seq.schema_name, seq.sequence_name),
-                action_description: format!("drop sequence {}.{}", seq.schema_name, seq.sequence_name),
+                action_description: format!(
+                    "drop sequence {}.{}",
+                    seq.schema_name, seq.sequence_name
+                ),
                 modification_detail: None,
             });
         }
@@ -1116,10 +1215,16 @@ fn get_sequence_modifications(
         mods.push(format!("type: {} -> {}", right.data_type, left.data_type));
     }
     if left.start_value != right.start_value {
-        mods.push(format!("start: {} -> {}", right.start_value, left.start_value));
+        mods.push(format!(
+            "start: {} -> {}",
+            right.start_value, left.start_value
+        ));
     }
     if left.increment_by != right.increment_by {
-        mods.push(format!("increment: {} -> {}", right.increment_by, left.increment_by));
+        mods.push(format!(
+            "increment: {} -> {}",
+            right.increment_by, left.increment_by
+        ));
     }
     if left.min_value != right.min_value {
         mods.push(format!("min: {} -> {}", right.min_value, left.min_value));
@@ -1188,8 +1293,14 @@ fn generate_xml(
     for row in &analysis.summary {
         xml.push_str("    <item>\n");
         xml.push_str(&format!("      <type>{}</type>\n", row.object_type));
-        xml.push_str(&format!("      <left_count>{}</left_count>\n", row.left_count));
-        xml.push_str(&format!("      <right_count>{}</right_count>\n", row.right_count));
+        xml.push_str(&format!(
+            "      <left_count>{}</left_count>\n",
+            row.left_count
+        ));
+        xml.push_str(&format!(
+            "      <right_count>{}</right_count>\n",
+            row.right_count
+        ));
         xml.push_str(&format!(
             "      <different>{}</different>\n",
             row.is_different().to_string().to_lowercase()
@@ -1204,7 +1315,12 @@ fn generate_xml(
     write_object_section(&mut xml, "tables", "table", &analysis.tables);
     write_object_section(&mut xml, "columns", "column", &analysis.columns);
     write_object_section(&mut xml, "views", "view", &analysis.views);
-    write_object_section(&mut xml, "materialized_views", "materialized_view", &analysis.materialized_views);
+    write_object_section(
+        &mut xml,
+        "materialized_views",
+        "materialized_view",
+        &analysis.materialized_views,
+    );
     write_object_section(&mut xml, "functions", "function", &analysis.functions);
     write_object_section(&mut xml, "indexes", "index", &analysis.indexes);
     write_object_section(&mut xml, "constraints", "constraint", &analysis.constraints);
@@ -1214,7 +1330,10 @@ fn generate_xml(
     // Row counts section
     xml.push_str("  <row_counts>\n");
 
-    let mut all_tables: Vec<&String> = row_counts_before.keys().chain(row_counts_after.keys()).collect();
+    let mut all_tables: Vec<&String> = row_counts_before
+        .keys()
+        .chain(row_counts_after.keys())
+        .collect();
     all_tables.sort();
     all_tables.dedup();
 
@@ -1285,12 +1404,20 @@ fn generate_xml(
     xml
 }
 
-fn write_object_section(xml: &mut String, section_name: &str, item_name: &str, objects: &[ObjectAnalysis]) {
+fn write_object_section(
+    xml: &mut String,
+    section_name: &str,
+    item_name: &str,
+    objects: &[ObjectAnalysis],
+) {
     xml.push_str(&format!("  <{}>\n", section_name));
     for obj in objects {
         xml.push_str(&format!("    <{}>\n", item_name));
         xml.push_str(&format!("      <name>{}</name>\n", xml_escape(&obj.name)));
-        xml.push_str(&format!("      <action>{}</action>\n", xml_escape(&obj.action_description)));
+        xml.push_str(&format!(
+            "      <action>{}</action>\n",
+            xml_escape(&obj.action_description)
+        ));
         if let Some(ref detail) = obj.modification_detail {
             xml.push_str(&format!("      <detail>{}</detail>\n", xml_escape(detail)));
         }

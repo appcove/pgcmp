@@ -2,6 +2,23 @@
 name = "pgcmp"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+authors = ["Jason Garber <jgarber@appcove.com>"]
+description = "PostgreSQL schema comparison and migration testing CLI, built for AI-assisted migration authoring"
+repository = "https://github.com/appcove/pgcmp"
+homepage = "https://github.com/appcove/pgcmp"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["postgresql", "schema", "migration", "diff", "database"]
+categories = ["command-line-utilities", "database"]
+include = [
+    "src/**",
+    "Cargo.toml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

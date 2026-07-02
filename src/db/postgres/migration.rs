@@ -1,5 +1,5 @@
 use super::DbConnection;
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use pg_query::protobuf::TransactionStmtKind;
 use std::fs;
 use std::path::Path;
@@ -125,38 +125,36 @@ fn validate_migration_structure(sql: &str) -> anyhow::Result<()> {
             continue;
         }
 
-        if let Some(ref stmt) = node.stmt {
-            if let Some(ref node_enum) = stmt.node {
-                if let pg_query::protobuf::node::Node::TransactionStmt(txn) = node_enum {
-                    let kind = txn.kind();
-                    match kind {
-                        TransactionStmtKind::TransStmtCommit
-                        | TransactionStmtKind::TransStmtCommitPrepared => {
-                            bail!(
-                                "Migration file contains COMMIT statement in the middle.\n\
-                                Transaction control should only be at the start (BEGIN) and end (ROLLBACK).\n\
-                                Please remove the COMMIT statement."
-                            );
-                        }
-                        TransactionStmtKind::TransStmtRollback
-                        | TransactionStmtKind::TransStmtRollbackPrepared => {
-                            bail!(
-                                "Migration file contains ROLLBACK statement in the middle.\n\
-                                Transaction control should only be at the start (BEGIN) and end (ROLLBACK).\n\
-                                Please remove the extra ROLLBACK statement."
-                            );
-                        }
-                        TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart => {
-                            bail!(
-                                "Migration file contains BEGIN statement in the middle.\n\
-                                Transaction control should only be at the start (BEGIN) and end (ROLLBACK).\n\
-                                Please remove the extra BEGIN statement."
-                            );
-                        }
-                        // Savepoints and rollback to savepoint are fine
-                        _ => {}
-                    }
+        if let Some(ref stmt) = node.stmt
+            && let Some(pg_query::protobuf::node::Node::TransactionStmt(txn)) = &stmt.node
+        {
+            let kind = txn.kind();
+            match kind {
+                TransactionStmtKind::TransStmtCommit
+                | TransactionStmtKind::TransStmtCommitPrepared => {
+                    bail!(
+                        "Migration file contains COMMIT statement in the middle.\n\
+                        Transaction control should only be at the start (BEGIN) and end (ROLLBACK).\n\
+                        Please remove the COMMIT statement."
+                    );
                 }
+                TransactionStmtKind::TransStmtRollback
+                | TransactionStmtKind::TransStmtRollbackPrepared => {
+                    bail!(
+                        "Migration file contains ROLLBACK statement in the middle.\n\
+                        Transaction control should only be at the start (BEGIN) and end (ROLLBACK).\n\
+                        Please remove the extra ROLLBACK statement."
+                    );
+                }
+                TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart => {
+                    bail!(
+                        "Migration file contains BEGIN statement in the middle.\n\
+                        Transaction control should only be at the start (BEGIN) and end (ROLLBACK).\n\
+                        Please remove the extra BEGIN statement."
+                    );
+                }
+                // Savepoints and rollback to savepoint are fine
+                _ => {}
             }
         }
     }
@@ -300,7 +298,7 @@ fn build_error_message(
     e: &tokio_postgres::Error,
 ) -> String {
     let mut error_msg = String::new();
-    error_msg.push_str("\n");
+    error_msg.push('\n');
     error_msg.push_str(
         "╔══════════════════════════════════════════════════════════════════════════════\n",
     );
@@ -383,12 +381,24 @@ pub fn print_rollback_banner() {
     eprintln!();
     eprintln!("╔══════════════════════════════════════════════════════════════════════════════╗");
     eprintln!("║                                                                              ║");
-    eprintln!("║   ██████╗  ██████╗ ██╗     ██╗     ███████╗██████╗     ██████╗  █████╗  ██████╗██╗  ██╗   ║");
-    eprintln!("║   ██╔══██╗██╔═══██╗██║     ██║     ██╔════╝██╔══██╗    ██╔══██╗██╔══██╗██╔════╝██║ ██╔╝   ║");
-    eprintln!("║   ██████╔╝██║   ██║██║     ██║     █████╗  ██║  ██║    ██████╔╝███████║██║     █████╔╝    ║");
-    eprintln!("║   ██╔══██╗██║   ██║██║     ██║     ██╔══╝  ██║  ██║    ██╔══██╗██╔══██║██║     ██╔═██╗    ║");
-    eprintln!("║   ██║  ██║╚██████╔╝███████╗███████╗███████╗██████╔╝    ██████╔╝██║  ██║╚██████╗██║  ██╗   ║");
-    eprintln!("║   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚══════╝╚══════╝╚═════╝     ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝   ║");
+    eprintln!(
+        "║   ██████╗  ██████╗ ██╗     ██╗     ███████╗██████╗     ██████╗  █████╗  ██████╗██╗  ██╗   ║"
+    );
+    eprintln!(
+        "║   ██╔══██╗██╔═══██╗██║     ██║     ██╔════╝██╔══██╗    ██╔══██╗██╔══██╗██╔════╝██║ ██╔╝   ║"
+    );
+    eprintln!(
+        "║   ██████╔╝██║   ██║██║     ██║     █████╗  ██║  ██║    ██████╔╝███████║██║     █████╔╝    ║"
+    );
+    eprintln!(
+        "║   ██╔══██╗██║   ██║██║     ██║     ██╔══╝  ██║  ██║    ██╔══██╗██╔══██║██║     ██╔═██╗    ║"
+    );
+    eprintln!(
+        "║   ██║  ██║╚██████╔╝███████╗███████╗███████╗██████╔╝    ██████╔╝██║  ██║╚██████╗██║  ██╗   ║"
+    );
+    eprintln!(
+        "║   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚══════╝╚══════╝╚═════╝     ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝   ║"
+    );
     eprintln!("║                                                                              ║");
     eprintln!("║                    MIGRATION WAS NOT APPLIED TO DATABASE                     ║");
     eprintln!("║                                                                              ║");
@@ -407,12 +417,24 @@ pub fn print_commit_banner() {
     eprintln!();
     eprintln!("╔══════════════════════════════════════════════════════════════════════════════╗");
     eprintln!("║                                                                              ║");
-    eprintln!("║    ██████╗ ██████╗ ███╗   ███╗███╗   ███╗██╗████████╗████████╗███████╗██████╗    ║");
-    eprintln!("║   ██╔════╝██╔═══██╗████╗ ████║████╗ ████║██║╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗   ║");
-    eprintln!("║   ██║     ██║   ██║██╔████╔██║██╔████╔██║██║   ██║      ██║   █████╗  ██║  ██║   ║");
-    eprintln!("║   ██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██║   ██║      ██║   ██╔══╝  ██║  ██║   ║");
-    eprintln!("║   ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║   ██║      ██║   ███████╗██████╔╝   ║");
-    eprintln!("║    ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═════╝    ║");
+    eprintln!(
+        "║    ██████╗ ██████╗ ███╗   ███╗███╗   ███╗██╗████████╗████████╗███████╗██████╗    ║"
+    );
+    eprintln!(
+        "║   ██╔════╝██╔═══██╗████╗ ████║████╗ ████║██║╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗   ║"
+    );
+    eprintln!(
+        "║   ██║     ██║   ██║██╔████╔██║██╔████╔██║██║   ██║      ██║   █████╗  ██║  ██║   ║"
+    );
+    eprintln!(
+        "║   ██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██║   ██║      ██║   ██╔══╝  ██║  ██║   ║"
+    );
+    eprintln!(
+        "║   ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║   ██║      ██║   ███████╗██████╔╝   ║"
+    );
+    eprintln!(
+        "║    ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═════╝    ║"
+    );
     eprintln!("║                                                                              ║");
     eprintln!("║                   MIGRATION SUCCESSFULLY APPLIED TO DATABASE                 ║");
     eprintln!("║                                                                              ║");

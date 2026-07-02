@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-**IMPORTANT: Also read `INSTRUCT.md` for additional instructions specific to this project.**
-
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Build Commands

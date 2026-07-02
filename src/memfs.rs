@@ -94,8 +94,9 @@ impl MemFs {
         for dir in &self.dirs_to_clear {
             let full_path = self.base_path.join(dir);
             if full_path.exists() {
-                fs::remove_dir_all(&full_path)
-                    .with_context(|| format!("Failed to clear directory: {}", full_path.display()))?;
+                fs::remove_dir_all(&full_path).with_context(|| {
+                    format!("Failed to clear directory: {}", full_path.display())
+                })?;
                 stats.dirs_cleared += 1;
             }
         }
@@ -109,21 +110,24 @@ impl MemFs {
                     // Create parent directories if needed
                     if let Some(parent) = full_path.parent() {
                         if !parent.exists() {
-                            fs::create_dir_all(parent)
-                                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+                            fs::create_dir_all(parent).with_context(|| {
+                                format!("Failed to create directory: {}", parent.display())
+                            })?;
                             stats.dirs_created += 1;
                         }
                     }
 
                     // Write the file
-                    fs::write(&full_path, content)
-                        .with_context(|| format!("Failed to write file: {}", full_path.display()))?;
+                    fs::write(&full_path, content).with_context(|| {
+                        format!("Failed to write file: {}", full_path.display())
+                    })?;
                     stats.files_written += 1;
                 }
                 FileEntry::Delete => {
                     if full_path.exists() {
-                        fs::remove_file(&full_path)
-                            .with_context(|| format!("Failed to delete file: {}", full_path.display()))?;
+                        fs::remove_file(&full_path).with_context(|| {
+                            format!("Failed to delete file: {}", full_path.display())
+                        })?;
                         stats.files_deleted += 1;
                     }
                 }

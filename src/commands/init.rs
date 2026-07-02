@@ -3,7 +3,7 @@ use crate::cli::InitArgs;
 use crate::config::{Config, DatabaseType, DbConfig, TlsMode};
 use crate::db::postgres::DbConnection;
 use crate::memfs::MemFs;
-use crate::schema::{SchemaObject, group_by_schema, generate_schema_file};
+use crate::schema::{SchemaObject, generate_schema_file, group_by_schema};
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
@@ -26,7 +26,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
-use tui_textarea::{TextArea, CursorMove};
+use tui_textarea::TextArea;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tab {
@@ -39,7 +39,15 @@ enum Tab {
     Setup,
 }
 
-const TABS: [Tab; 7] = [Tab::Setup, Tab::NewDb, Tab::OldDb, Tab::Pull, Tab::Claude, Tab::Instruct, Tab::Migration];
+const TABS: [Tab; 7] = [
+    Tab::Setup,
+    Tab::NewDb,
+    Tab::OldDb,
+    Tab::Pull,
+    Tab::Claude,
+    Tab::Instruct,
+    Tab::Migration,
+];
 
 /// Default template for MIGRATION.sql files.
 /// Must start with BEGIN TRANSACTION and end with ROLLBACK for safety.
@@ -190,11 +198,17 @@ const MIGRATION_BUTTONS: [MigrationButton; 3] = [
 
 impl MigrationButton {
     fn next(self) -> Self {
-        let idx = MIGRATION_BUTTONS.iter().position(|&b| b == self).unwrap_or(0);
+        let idx = MIGRATION_BUTTONS
+            .iter()
+            .position(|&b| b == self)
+            .unwrap_or(0);
         MIGRATION_BUTTONS[(idx + 1) % MIGRATION_BUTTONS.len()]
     }
     fn prev(self) -> Self {
-        let idx = MIGRATION_BUTTONS.iter().position(|&b| b == self).unwrap_or(0);
+        let idx = MIGRATION_BUTTONS
+            .iter()
+            .position(|&b| b == self)
+            .unwrap_or(0);
         MIGRATION_BUTTONS[(idx + MIGRATION_BUTTONS.len() - 1) % MIGRATION_BUTTONS.len()]
     }
 }
@@ -229,18 +243,21 @@ enum InstructButton {
     Revert,
 }
 
-const INSTRUCT_BUTTONS: [InstructButton; 2] = [
-    InstructButton::Save,
-    InstructButton::Revert,
-];
+const INSTRUCT_BUTTONS: [InstructButton; 2] = [InstructButton::Save, InstructButton::Revert];
 
 impl InstructButton {
     fn next(self) -> Self {
-        let idx = INSTRUCT_BUTTONS.iter().position(|&b| b == self).unwrap_or(0);
+        let idx = INSTRUCT_BUTTONS
+            .iter()
+            .position(|&b| b == self)
+            .unwrap_or(0);
         INSTRUCT_BUTTONS[(idx + 1) % INSTRUCT_BUTTONS.len()]
     }
     fn prev(self) -> Self {
-        let idx = INSTRUCT_BUTTONS.iter().position(|&b| b == self).unwrap_or(0);
+        let idx = INSTRUCT_BUTTONS
+            .iter()
+            .position(|&b| b == self)
+            .unwrap_or(0);
         INSTRUCT_BUTTONS[(idx + INSTRUCT_BUTTONS.len() - 1) % INSTRUCT_BUTTONS.len()]
     }
 }
@@ -349,11 +366,27 @@ impl DbForm {
         let password = self.password.value();
         let database = self.database.value();
         DbConfig {
-            host: if host.is_empty() { None } else { Some(host.into()) },
+            host: if host.is_empty() {
+                None
+            } else {
+                Some(host.into())
+            },
             port,
-            user: if user.is_empty() { None } else { Some(user.into()) },
-            password: if password.is_empty() { None } else { Some(password.into()) },
-            database: if database.is_empty() { None } else { Some(database.into()) },
+            user: if user.is_empty() {
+                None
+            } else {
+                Some(user.into())
+            },
+            password: if password.is_empty() {
+                None
+            } else {
+                Some(password.into())
+            },
+            database: if database.is_empty() {
+                None
+            } else {
+                Some(database.into())
+            },
             tls: Some(self.tls),
         }
     }
@@ -547,19 +580,13 @@ impl State {
         // Add MIGRATION.sql if it doesn't exist on disk
         let migration_path = app.path.join("MIGRATION.sql");
         if !migration_path.exists() {
-            memfs.write(
-                PathBuf::from("MIGRATION.sql"),
-                DEFAULT_MIGRATION_TEMPLATE,
-            );
+            memfs.write(PathBuf::from("MIGRATION.sql"), DEFAULT_MIGRATION_TEMPLATE);
         }
 
         // Add INSTRUCT.md if it doesn't exist on disk
         let instruct_path = app.path.join("INSTRUCT.md");
         if !instruct_path.exists() {
-            memfs.write(
-                PathBuf::from("INSTRUCT.md"),
-                DEFAULT_INSTRUCT_TEMPLATE,
-            );
+            memfs.write(PathBuf::from("INSTRUCT.md"), DEFAULT_INSTRUCT_TEMPLATE);
         }
 
         Self {
@@ -684,16 +711,18 @@ impl State {
 
     /// Check if new database has been pulled (has files in memfs under new.database/)
     fn has_new_pulled(&self) -> bool {
-        self.memfs.list_files().iter().any(|(path, is_write)| {
-            *is_write && path.starts_with("new.database/")
-        })
+        self.memfs
+            .list_files()
+            .iter()
+            .any(|(path, is_write)| *is_write && path.starts_with("new.database/"))
     }
 
     /// Check if old database has been pulled (has files in memfs under old.database/)
     fn has_old_pulled(&self) -> bool {
-        self.memfs.list_files().iter().any(|(path, is_write)| {
-            *is_write && path.starts_with("old.database/")
-        })
+        self.memfs
+            .list_files()
+            .iter()
+            .any(|(path, is_write)| *is_write && path.starts_with("old.database/"))
     }
 
     /// Check if both databases have been pulled
@@ -825,37 +854,41 @@ async fn main_loop(
 
 fn handle_dialog_event(evt: &Event, state: &mut State) -> anyhow::Result<bool> {
     match evt {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
-            match key.code {
-                KeyCode::Esc => {
-                    state.dialog = None;
-                }
-                KeyCode::Tab | KeyCode::Right | KeyCode::Down => {
-                    state.dialog = Some(state.dialog.unwrap().next());
-                }
-                KeyCode::BackTab | KeyCode::Left | KeyCode::Up => {
-                    state.dialog = Some(state.dialog.unwrap().prev());
-                }
-                KeyCode::Enter | KeyCode::Char(' ') => match state.dialog.unwrap() {
-                    DialogButton::SaveAndClose => {
-                        if !state.git_clean {
-                            state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
-                            state.dialog = None;
-                        } else {
-                            save_all(&state.app, state.database_type, &mut state.new_db, &mut state.old_db, &state.memfs)?;
-                            return Ok(true);
-                        }
-                    }
-                    DialogButton::Discard => {
+        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+            KeyCode::Esc => {
+                state.dialog = None;
+            }
+            KeyCode::Tab | KeyCode::Right | KeyCode::Down => {
+                state.dialog = Some(state.dialog.unwrap().next());
+            }
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Up => {
+                state.dialog = Some(state.dialog.unwrap().prev());
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => match state.dialog.unwrap() {
+                DialogButton::SaveAndClose => {
+                    if !state.git_clean {
+                        state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
+                        state.dialog = None;
+                    } else {
+                        save_all(
+                            state.app,
+                            state.database_type,
+                            &mut state.new_db,
+                            &mut state.old_db,
+                            &state.memfs,
+                        )?;
                         return Ok(true);
                     }
-                    DialogButton::Cancel => {
-                        state.dialog = None;
-                    }
-                },
-                _ => {}
-            }
-        }
+                }
+                DialogButton::Discard => {
+                    return Ok(true);
+                }
+                DialogButton::Cancel => {
+                    state.dialog = None;
+                }
+            },
+            _ => {}
+        },
         Event::Mouse(m) if m.kind == MouseEventKind::Down(event::MouseButton::Left) => {
             let pos = Rect::new(m.column, m.row, 1, 1);
             let clicked = state
@@ -871,7 +904,13 @@ fn handle_dialog_event(evt: &Event, state: &mut State) -> anyhow::Result<bool> {
                             state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
                             state.dialog = None;
                         } else {
-                            save_all(&state.app, state.database_type, &mut state.new_db, &mut state.old_db, &state.memfs)?;
+                            save_all(
+                                state.app,
+                                state.database_type,
+                                &mut state.new_db,
+                                &mut state.old_db,
+                                &state.memfs,
+                            )?;
                             return Ok(true);
                         }
                     }
@@ -935,34 +974,33 @@ fn handle_migration_dialog_event(evt: &Event, state: &mut State) {
     let line_count = content.lines().count() as u16;
 
     match evt {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
-            match key.code {
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
-                    state.migration_dialog_open = false;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if state.migration_scroll < line_count.saturating_sub(1) {
-                        state.migration_scroll += 1;
-                    }
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    state.migration_scroll = state.migration_scroll.saturating_sub(1);
-                }
-                KeyCode::PageDown => {
-                    state.migration_scroll = (state.migration_scroll + 20).min(line_count.saturating_sub(1));
-                }
-                KeyCode::PageUp => {
-                    state.migration_scroll = state.migration_scroll.saturating_sub(20);
-                }
-                KeyCode::Home | KeyCode::Char('g') => {
-                    state.migration_scroll = 0;
-                }
-                KeyCode::End | KeyCode::Char('G') => {
-                    state.migration_scroll = line_count.saturating_sub(1);
-                }
-                _ => {}
+        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                state.migration_dialog_open = false;
             }
-        }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if state.migration_scroll < line_count.saturating_sub(1) {
+                    state.migration_scroll += 1;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.migration_scroll = state.migration_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                state.migration_scroll =
+                    (state.migration_scroll + 20).min(line_count.saturating_sub(1));
+            }
+            KeyCode::PageUp => {
+                state.migration_scroll = state.migration_scroll.saturating_sub(20);
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                state.migration_scroll = 0;
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                state.migration_scroll = line_count.saturating_sub(1);
+            }
+            _ => {}
+        },
         Event::Mouse(m) => {
             match m.kind {
                 MouseEventKind::Down(event::MouseButton::Left) => {
@@ -988,34 +1026,32 @@ fn handle_claude_dialog_event(evt: &Event, state: &mut State) {
     let line_count = content.lines().count() as u16;
 
     match evt {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
-            match key.code {
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
-                    state.claude_dialog_open = false;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if state.claude_scroll < line_count.saturating_sub(1) {
-                        state.claude_scroll += 1;
-                    }
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    state.claude_scroll = state.claude_scroll.saturating_sub(1);
-                }
-                KeyCode::PageDown => {
-                    state.claude_scroll = (state.claude_scroll + 20).min(line_count.saturating_sub(1));
-                }
-                KeyCode::PageUp => {
-                    state.claude_scroll = state.claude_scroll.saturating_sub(20);
-                }
-                KeyCode::Home | KeyCode::Char('g') => {
-                    state.claude_scroll = 0;
-                }
-                KeyCode::End | KeyCode::Char('G') => {
-                    state.claude_scroll = line_count.saturating_sub(1);
-                }
-                _ => {}
+        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                state.claude_dialog_open = false;
             }
-        }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if state.claude_scroll < line_count.saturating_sub(1) {
+                    state.claude_scroll += 1;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.claude_scroll = state.claude_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                state.claude_scroll = (state.claude_scroll + 20).min(line_count.saturating_sub(1));
+            }
+            KeyCode::PageUp => {
+                state.claude_scroll = state.claude_scroll.saturating_sub(20);
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                state.claude_scroll = 0;
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                state.claude_scroll = line_count.saturating_sub(1);
+            }
+            _ => {}
+        },
         Event::Mouse(m) => {
             match m.kind {
                 MouseEventKind::Down(event::MouseButton::Left) => {
@@ -1041,34 +1077,33 @@ fn handle_instruct_dialog_event(evt: &Event, state: &mut State) {
     let line_count = content.lines().count() as u16;
 
     match evt {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
-            match key.code {
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
-                    state.instruct_dialog_open = false;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if state.instruct_scroll < line_count.saturating_sub(1) {
-                        state.instruct_scroll += 1;
-                    }
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    state.instruct_scroll = state.instruct_scroll.saturating_sub(1);
-                }
-                KeyCode::PageDown => {
-                    state.instruct_scroll = (state.instruct_scroll + 20).min(line_count.saturating_sub(1));
-                }
-                KeyCode::PageUp => {
-                    state.instruct_scroll = state.instruct_scroll.saturating_sub(20);
-                }
-                KeyCode::Home | KeyCode::Char('g') => {
-                    state.instruct_scroll = 0;
-                }
-                KeyCode::End | KeyCode::Char('G') => {
-                    state.instruct_scroll = line_count.saturating_sub(1);
-                }
-                _ => {}
+        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                state.instruct_dialog_open = false;
             }
-        }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if state.instruct_scroll < line_count.saturating_sub(1) {
+                    state.instruct_scroll += 1;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.instruct_scroll = state.instruct_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                state.instruct_scroll =
+                    (state.instruct_scroll + 20).min(line_count.saturating_sub(1));
+            }
+            KeyCode::PageUp => {
+                state.instruct_scroll = state.instruct_scroll.saturating_sub(20);
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                state.instruct_scroll = 0;
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                state.instruct_scroll = line_count.saturating_sub(1);
+            }
+            _ => {}
+        },
         Event::Mouse(m) => {
             match m.kind {
                 MouseEventKind::Down(event::MouseButton::Left) => {
@@ -1129,20 +1164,18 @@ fn handle_event(evt: &Event, state: &mut State) -> anyhow::Result<bool> {
     }
 
     match evt {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
-            match key.code {
-                KeyCode::Esc => {
-                    if state.has_unsaved_changes() {
-                        state.dialog = Some(DialogButton::SaveAndClose);
-                    } else {
-                        return Ok(true);
-                    }
-                }
-                _ => {
-                    handle_tab_key_event(key.code, state)?;
+        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+            KeyCode::Esc => {
+                if state.has_unsaved_changes() {
+                    state.dialog = Some(DialogButton::SaveAndClose);
+                } else {
+                    return Ok(true);
                 }
             }
-        }
+            _ => {
+                handle_tab_key_event(key.code, state)?;
+            }
+        },
         Event::Mouse(m) if m.kind == MouseEventKind::Down(event::MouseButton::Left) => {
             handle_mouse_click(m.column, m.row, state)?;
         }
@@ -1211,106 +1244,97 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                     // Forward to input handler
                     if let Some(form) = state.current_form() {
                         if let Some(input) = form.input_mut(field) {
-                            let fake_evt = Event::Key(crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE));
+                            let fake_evt = Event::Key(crossterm::event::KeyEvent::new(
+                                code,
+                                crossterm::event::KeyModifiers::NONE,
+                            ));
                             input.handle_event(&fake_evt);
                         }
                     }
                 }
             }
         }
-        Focus::PullButton(btn) => {
-            match code {
-                KeyCode::Tab | KeyCode::Down => {
-                    if btn == PullButton::Clear {
-                        state.focus = Focus::BottomButton(BottomButton::Save);
-                    } else {
-                        state.focus = Focus::PullButton(btn.next());
-                    }
-                }
-                KeyCode::BackTab | KeyCode::Up => {
-                    if btn == PullButton::Pull {
-                        state.focus = Focus::TabBar;
-                    } else {
-                        state.focus = Focus::PullButton(btn.prev());
-                    }
-                }
-                KeyCode::Left => {
-                    state.focus = Focus::PullButton(btn.prev());
-                }
-                KeyCode::Right => {
+        Focus::PullButton(btn) => match code {
+            KeyCode::Tab | KeyCode::Down => {
+                if btn == PullButton::Clear {
+                    state.focus = Focus::BottomButton(BottomButton::Save);
+                } else {
                     state.focus = Focus::PullButton(btn.next());
                 }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    match btn {
-                        PullButton::Pull => start_pull(state),
-                        PullButton::Clear => clear_database_structure(state),
-                    }
-                }
-                _ => {}
             }
-        }
-        Focus::ClaudeButton(btn) => {
-            match code {
-                KeyCode::Tab => {
-                    if btn == ClaudeButton::Revert {
-                        state.focus = Focus::BottomButton(BottomButton::Save);
-                    } else {
-                        state.focus = Focus::ClaudeButton(btn.next());
-                    }
+            KeyCode::BackTab | KeyCode::Up => {
+                if btn == PullButton::Pull {
+                    state.focus = Focus::TabBar;
+                } else {
+                    state.focus = Focus::PullButton(btn.prev());
                 }
-                KeyCode::BackTab => {
-                    if btn == ClaudeButton::ViewContents {
-                        state.focus = Focus::TabBar;
-                    } else {
-                        state.focus = Focus::ClaudeButton(btn.prev());
-                    }
-                }
-                KeyCode::Down => {
-                    match btn {
-                        ClaudeButton::ViewContents => {
-                            state.focus = Focus::ClaudeButton(ClaudeButton::Generate);
-                        }
-                        _ => {
-                            state.focus = Focus::BottomButton(BottomButton::Save);
-                        }
-                    }
-                }
-                KeyCode::Up => {
-                    match btn {
-                        ClaudeButton::Generate | ClaudeButton::Revert => {
-                            state.focus = Focus::ClaudeButton(ClaudeButton::ViewContents);
-                        }
-                        ClaudeButton::ViewContents => {
-                            state.focus = Focus::TabBar;
-                        }
-                    }
-                }
-                KeyCode::Left => {
-                    state.focus = Focus::ClaudeButton(btn.prev());
-                }
-                KeyCode::Right => {
+            }
+            KeyCode::Left => {
+                state.focus = Focus::PullButton(btn.prev());
+            }
+            KeyCode::Right => {
+                state.focus = Focus::PullButton(btn.next());
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => match btn {
+                PullButton::Pull => start_pull(state),
+                PullButton::Clear => clear_database_structure(state),
+            },
+            _ => {}
+        },
+        Focus::ClaudeButton(btn) => match code {
+            KeyCode::Tab => {
+                if btn == ClaudeButton::Revert {
+                    state.focus = Focus::BottomButton(BottomButton::Save);
+                } else {
                     state.focus = Focus::ClaudeButton(btn.next());
                 }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    match btn {
-                        ClaudeButton::Generate => {
-                            if state.has_both_pulled() {
-                                let content = generate_claude_md(state);
-                                state.memfs.write(PathBuf::from("CLAUDE.md"), content);
-                            }
-                        }
-                        ClaudeButton::Revert => {
-                            state.memfs.remove(PathBuf::from("CLAUDE.md"));
-                        }
-                        ClaudeButton::ViewContents => {
-                            state.claude_dialog_open = true;
-                            state.claude_scroll = 0;
-                        }
+            }
+            KeyCode::BackTab => {
+                if btn == ClaudeButton::ViewContents {
+                    state.focus = Focus::TabBar;
+                } else {
+                    state.focus = Focus::ClaudeButton(btn.prev());
+                }
+            }
+            KeyCode::Down => match btn {
+                ClaudeButton::ViewContents => {
+                    state.focus = Focus::ClaudeButton(ClaudeButton::Generate);
+                }
+                _ => {
+                    state.focus = Focus::BottomButton(BottomButton::Save);
+                }
+            },
+            KeyCode::Up => match btn {
+                ClaudeButton::Generate | ClaudeButton::Revert => {
+                    state.focus = Focus::ClaudeButton(ClaudeButton::ViewContents);
+                }
+                ClaudeButton::ViewContents => {
+                    state.focus = Focus::TabBar;
+                }
+            },
+            KeyCode::Left => {
+                state.focus = Focus::ClaudeButton(btn.prev());
+            }
+            KeyCode::Right => {
+                state.focus = Focus::ClaudeButton(btn.next());
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => match btn {
+                ClaudeButton::Generate => {
+                    if state.has_both_pulled() {
+                        let content = generate_claude_md(state);
+                        state.memfs.write(PathBuf::from("CLAUDE.md"), content);
                     }
                 }
-                _ => {}
-            }
-        }
+                ClaudeButton::Revert => {
+                    state.memfs.remove(PathBuf::from("CLAUDE.md"));
+                }
+                ClaudeButton::ViewContents => {
+                    state.claude_dialog_open = true;
+                    state.claude_scroll = 0;
+                }
+            },
+            _ => {}
+        },
         Focus::InstructTextArea => {
             match code {
                 KeyCode::Tab => {
@@ -1422,7 +1446,9 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                     match btn {
                         MigrationButton::Clear => {
                             // Write empty content to memfs
-                            state.memfs.write(PathBuf::from("MIGRATION.sql"), DEFAULT_MIGRATION_TEMPLATE);
+                            state
+                                .memfs
+                                .write(PathBuf::from("MIGRATION.sql"), DEFAULT_MIGRATION_TEMPLATE);
                         }
                         MigrationButton::UndoClear => {
                             // Remove from memfs to restore disk version
@@ -1437,20 +1463,18 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                 _ => {}
             }
         }
-        Focus::SetupDbType => {
-            match code {
-                KeyCode::Tab | KeyCode::Down => {
-                    state.focus = Focus::GitButton(GitButton::Init);
-                }
-                KeyCode::BackTab | KeyCode::Up => {
-                    state.focus = Focus::TabBar;
-                }
-                KeyCode::Left | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
-                    state.database_type = state.database_type.toggle();
-                }
-                _ => {}
+        Focus::SetupDbType => match code {
+            KeyCode::Tab | KeyCode::Down => {
+                state.focus = Focus::GitButton(GitButton::Init);
             }
-        }
+            KeyCode::BackTab | KeyCode::Up => {
+                state.focus = Focus::TabBar;
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                state.database_type = state.database_type.toggle();
+            }
+            _ => {}
+        },
         Focus::GitButton(btn) => {
             match code {
                 KeyCode::Tab => {
@@ -1481,59 +1505,59 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                 KeyCode::Right => {
                     state.focus = Focus::GitButton(btn.next());
                 }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    match btn {
-                        GitButton::Init => {
-                            if !state.has_git {
-                                git_init(state);
-                            }
-                        }
-                        GitButton::CommitAll => {
-                            if state.has_git && !state.git_clean {
-                                git_commit_all(state);
-                            }
-                        }
-                        GitButton::Refresh => {
-                            state.refresh_git_status();
+                KeyCode::Enter | KeyCode::Char(' ') => match btn {
+                    GitButton::Init => {
+                        if !state.has_git {
+                            git_init(state);
                         }
                     }
-                }
+                    GitButton::CommitAll => {
+                        if state.has_git && !state.git_clean {
+                            git_commit_all(state);
+                        }
+                    }
+                    GitButton::Refresh => {
+                        state.refresh_git_status();
+                    }
+                },
                 _ => {}
             }
         }
-        Focus::BottomButton(btn) => {
-            match code {
-                KeyCode::Tab | KeyCode::Down => {
-                    state.focus = Focus::TabBar;
-                }
-                KeyCode::BackTab | KeyCode::Up => {
-                    state.focus = default_focus_for_tab(state.tab);
-                }
-                KeyCode::Left | KeyCode::Right => {
-                    state.focus = Focus::BottomButton(btn.toggle());
-                }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    match btn {
-                        BottomButton::Save => {
-                            if !state.git_clean {
-                                state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
-                            } else {
-                                save_all(&state.app, state.database_type, &mut state.new_db, &mut state.old_db, &state.memfs)?;
-                                state.should_exit = true;
-                            }
-                        }
-                        BottomButton::Cancel => {
-                            if state.has_unsaved_changes() {
-                                state.dialog = Some(DialogButton::SaveAndClose);
-                            } else {
-                                state.should_exit = true;
-                            }
-                        }
+        Focus::BottomButton(btn) => match code {
+            KeyCode::Tab | KeyCode::Down => {
+                state.focus = Focus::TabBar;
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                state.focus = default_focus_for_tab(state.tab);
+            }
+            KeyCode::Left | KeyCode::Right => {
+                state.focus = Focus::BottomButton(btn.toggle());
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => match btn {
+                BottomButton::Save => {
+                    if !state.git_clean {
+                        state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
+                    } else {
+                        save_all(
+                            state.app,
+                            state.database_type,
+                            &mut state.new_db,
+                            &mut state.old_db,
+                            &state.memfs,
+                        )?;
+                        state.should_exit = true;
                     }
                 }
-                _ => {}
-            }
-        }
+                BottomButton::Cancel => {
+                    if state.has_unsaved_changes() {
+                        state.dialog = Some(DialogButton::SaveAndClose);
+                    } else {
+                        state.should_exit = true;
+                    }
+                }
+            },
+            _ => {}
+        },
     }
     Ok(())
 }
@@ -1624,7 +1648,9 @@ fn handle_mouse_click(col: u16, row: u16, state: &mut State) -> anyhow::Result<(
                 state.focus = Focus::MigrationButton(btn);
                 match btn {
                     MigrationButton::Clear => {
-                        state.memfs.write(PathBuf::from("MIGRATION.sql"), DEFAULT_MIGRATION_TEMPLATE);
+                        state
+                            .memfs
+                            .write(PathBuf::from("MIGRATION.sql"), DEFAULT_MIGRATION_TEMPLATE);
                     }
                     MigrationButton::UndoClear => {
                         state.memfs.remove(PathBuf::from("MIGRATION.sql"));
@@ -1660,7 +1686,13 @@ fn handle_mouse_click(col: u16, row: u16, state: &mut State) -> anyhow::Result<(
                         if !state.git_clean {
                             state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
                         } else {
-                            save_all(&state.app, state.database_type, &mut state.new_db, &mut state.old_db, &state.memfs)?;
+                            save_all(
+                                state.app,
+                                state.database_type,
+                                &mut state.new_db,
+                                &mut state.old_db,
+                                &state.memfs,
+                            )?;
                             state.should_exit = true;
                         }
                     }
@@ -1909,212 +1941,378 @@ async fn do_pull(
 
     if let Some(config) = new_config {
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Connecting to new DB...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("Connecting to new DB...".into()))
+            .await;
 
         let conn = match DbConnection::connect(&config.connection_string()).await {
             Ok(c) => c,
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("New DB connection failed: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "New DB connection failed: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         };
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("New DB: extracting types...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("New DB: extracting types...".into()))
+            .await;
         match crate::db::postgres::types::extract_types(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract types: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract types: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("New DB: extracting tables...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("New DB: extracting tables...".into()))
+            .await;
         match crate::db::postgres::tables::extract_tables(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract tables: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract tables: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("New DB: extracting views...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("New DB: extracting views...".into()))
+            .await;
         match crate::db::postgres::views::extract_views(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract views: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract views: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("New DB: extracting materialized views...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status(
+                "New DB: extracting materialized views...".into(),
+            ))
+            .await;
         match crate::db::postgres::views::extract_materialized_views(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract materialized views: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract materialized views: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("New DB: extracting functions...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status(
+                "New DB: extracting functions...".into(),
+            ))
+            .await;
         match crate::db::postgres::functions::extract_functions(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract functions: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract functions: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("New DB: extracting indexes...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("New DB: extracting indexes...".into()))
+            .await;
         match crate::db::postgres::indexes::extract_indexes(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract indexes: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract indexes: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("New DB: extracting constraints...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status(
+                "New DB: extracting constraints...".into(),
+            ))
+            .await;
         match crate::db::postgres::constraints::extract_constraints(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract constraints: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract constraints: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("New DB: extracting triggers...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("New DB: extracting triggers...".into()))
+            .await;
         match crate::db::postgres::triggers::extract_triggers(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract triggers: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract triggers: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("New DB: extracting sequences...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status(
+                "New DB: extracting sequences...".into(),
+            ))
+            .await;
         match crate::db::postgres::sequences::extract_sequences(conn.client()).await {
             Ok(objs) => data.new_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract sequences: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract sequences: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
-        let _ = tx.send(PullMessage::Status(format!("New DB: extracted {} objects", data.new_objects.len()))).await;
+        let _ = tx
+            .send(PullMessage::Status(format!(
+                "New DB: extracted {} objects",
+                data.new_objects.len()
+            )))
+            .await;
     }
 
     if let Some(config) = old_config {
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Connecting to old DB...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("Connecting to old DB...".into()))
+            .await;
 
         let conn = match DbConnection::connect(&config.connection_string()).await {
             Ok(c) => c,
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Old DB connection failed: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Old DB connection failed: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         };
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Old DB: extracting types...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("Old DB: extracting types...".into()))
+            .await;
         match crate::db::postgres::types::extract_types(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract types: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract types: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Old DB: extracting tables...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("Old DB: extracting tables...".into()))
+            .await;
         match crate::db::postgres::tables::extract_tables(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract tables: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract tables: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Old DB: extracting views...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("Old DB: extracting views...".into()))
+            .await;
         match crate::db::postgres::views::extract_views(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract views: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract views: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Old DB: extracting materialized views...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status(
+                "Old DB: extracting materialized views...".into(),
+            ))
+            .await;
         match crate::db::postgres::views::extract_materialized_views(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract materialized views: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract materialized views: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Old DB: extracting functions...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status(
+                "Old DB: extracting functions...".into(),
+            ))
+            .await;
         match crate::db::postgres::functions::extract_functions(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract functions: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract functions: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Old DB: extracting indexes...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("Old DB: extracting indexes...".into()))
+            .await;
         match crate::db::postgres::indexes::extract_indexes(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract indexes: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract indexes: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Old DB: extracting constraints...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status(
+                "Old DB: extracting constraints...".into(),
+            ))
+            .await;
         match crate::db::postgres::constraints::extract_constraints(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract constraints: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract constraints: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Old DB: extracting triggers...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status("Old DB: extracting triggers...".into()))
+            .await;
         match crate::db::postgres::triggers::extract_triggers(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract triggers: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract triggers: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
         check_cancel!();
-        let _ = tx.send(PullMessage::Status("Old DB: extracting sequences...".into())).await;
+        let _ = tx
+            .send(PullMessage::Status(
+                "Old DB: extracting sequences...".into(),
+            ))
+            .await;
         match crate::db::postgres::sequences::extract_sequences(conn.client()).await {
             Ok(objs) => data.old_objects.extend(objs),
             Err(e) => {
-                let _ = tx.send(PullMessage::Done(Err(format!("Failed to extract sequences: {}", e)))).await;
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract sequences: {}",
+                        e
+                    ))))
+                    .await;
                 return;
             }
         }
 
-        let _ = tx.send(PullMessage::Status(format!("Old DB: extracted {} objects", data.old_objects.len()))).await;
+        let _ = tx
+            .send(PullMessage::Status(format!(
+                "Old DB: extracted {} objects",
+                data.old_objects.len()
+            )))
+            .await;
     }
 
     check_cancel!();
@@ -2160,13 +2358,13 @@ fn poll_pull_task(state: &mut State) {
                     // Auto-generate CLAUDE.md if both databases are pulled
                     if state.has_both_pulled() {
                         let claude_content = generate_claude_md(state);
-                        state.memfs.write(PathBuf::from("CLAUDE.md"), claude_content);
+                        state
+                            .memfs
+                            .write(PathBuf::from("CLAUDE.md"), claude_content);
                     }
 
-                    state.pull_status = format!(
-                        "Done: {} new, {} old objects staged",
-                        new_count, old_count
-                    );
+                    state.pull_status =
+                        format!("Done: {} new, {} old objects staged", new_count, old_count);
                     state.pull_in_progress = false;
                     state.pull_rx = None;
                     state.pull_cancel = None;
@@ -2194,7 +2392,13 @@ fn poll_pull_task(state: &mut State) {
     }
 }
 
-fn save_all(app: &App, database_type: DatabaseType, new_db: &mut DbForm, old_db: &mut DbForm, memfs: &MemFs) -> anyhow::Result<()> {
+fn save_all(
+    app: &App,
+    database_type: DatabaseType,
+    new_db: &mut DbForm,
+    old_db: &mut DbForm,
+    memfs: &MemFs,
+) -> anyhow::Result<()> {
     // Save config
     let new_config = new_db.to_config_partial();
     let old_config = old_db.to_config_partial();
@@ -2268,14 +2472,17 @@ fn ui(f: &mut Frame, state: &mut State) {
 
 fn draw_tab_bar(f: &mut Frame, area: Rect, state: &mut State) {
     // Build tab titles with status indicators
-    let titles: Vec<Line> = TABS.iter().map(|t| {
-        let (status_char, status_style) = tab_status(*t, state);
-        let label = t.label();
-        Line::from(vec![
-            Span::styled(status_char, status_style),
-            Span::raw(label),
-        ])
-    }).collect();
+    let titles: Vec<Line> = TABS
+        .iter()
+        .map(|t| {
+            let (status_char, status_style) = tab_status(*t, state);
+            let label = t.label();
+            Line::from(vec![
+                Span::styled(status_char, status_style),
+                Span::raw(label),
+            ])
+        })
+        .collect();
 
     let tab_bar_active = matches!(state.focus, Focus::TabBar);
     let border_style = if tab_bar_active {
@@ -2321,7 +2528,8 @@ fn tab_status(tab: Tab, state: &State) -> (&'static str, Style) {
             } else if state.new_db.validation_status.contains("required")
                 || state.new_db.validation_status.contains("invalid")
                 || state.new_db.connection_status.contains("fail")
-                || state.new_db.connection_status.contains("Fail") {
+                || state.new_db.connection_status.contains("Fail")
+            {
                 ("✗", Style::new().red())
             } else {
                 ("○", Style::new().dark_gray())
@@ -2333,7 +2541,8 @@ fn tab_status(tab: Tab, state: &State) -> (&'static str, Style) {
             } else if state.old_db.validation_status.contains("required")
                 || state.old_db.validation_status.contains("invalid")
                 || state.old_db.connection_status.contains("fail")
-                || state.old_db.connection_status.contains("Fail") {
+                || state.old_db.connection_status.contains("Fail")
+            {
                 ("✗", Style::new().red())
             } else {
                 ("○", Style::new().dark_gray())
@@ -2464,7 +2673,9 @@ fn draw_db_tab(f: &mut Frame, area: Rect, state: &mut State, tab: Tab) {
         let row_area = Rect::new(padding.x, padding.y + row, padding.width, 1);
         let active = active_field == Some(*field);
         draw_field(f, row_area, label, value, active);
-        state.click_areas.push((ClickTarget::Field(tab, *field), row_area));
+        state
+            .click_areas
+            .push((ClickTarget::Field(tab, *field), row_area));
     }
 
     // TLS row
@@ -2500,17 +2711,16 @@ fn draw_status_box(f: &mut Frame, area: Rect, form: &DbForm, _base_path: &std::p
         Style::new().dark_gray()
     };
 
-    let connection_style = if form.connection_status.contains("fail")
-        || form.connection_status.contains("Fail")
-    {
-        Style::new().red()
-    } else if form.connection_status.contains("Connected") {
-        Style::new().green()
-    } else if form.connection_status.contains("Testing") {
-        Style::new().yellow()
-    } else {
-        Style::new().dark_gray()
-    };
+    let connection_style =
+        if form.connection_status.contains("fail") || form.connection_status.contains("Fail") {
+            Style::new().red()
+        } else if form.connection_status.contains("Connected") {
+            Style::new().green()
+        } else if form.connection_status.contains("Testing") {
+            Style::new().yellow()
+        } else {
+            Style::new().dark_gray()
+        };
 
     let (saved_text, saved_style) = if form.is_saved() {
         ("Saved", Style::new().green())
@@ -2599,7 +2809,9 @@ fn draw_pull_tab(f: &mut Frame, area: Rect, state: &mut State) {
         let pull_label = "[ Pull Database Structure ]";
         let pull_area = Rect::new(padding.x, btn_y, pull_label.len() as u16, 1);
         f.render_widget(Paragraph::new(pull_label).style(pull_style), pull_area);
-        state.click_areas.push((ClickTarget::PullButton(PullButton::Pull), pull_area));
+        state
+            .click_areas
+            .push((ClickTarget::PullButton(PullButton::Pull), pull_area));
 
         // Clear button
         let clear_style = if active_btn == Some(PullButton::Clear) {
@@ -2611,7 +2823,9 @@ fn draw_pull_tab(f: &mut Frame, area: Rect, state: &mut State) {
         let clear_x = padding.x + pull_label.len() as u16 + 2;
         let clear_area = Rect::new(clear_x, btn_y, clear_label.len() as u16, 1);
         f.render_widget(Paragraph::new(clear_label).style(clear_style), clear_area);
-        state.click_areas.push((ClickTarget::PullButton(PullButton::Clear), clear_area));
+        state
+            .click_areas
+            .push((ClickTarget::PullButton(PullButton::Clear), clear_area));
     }
 
     // Pull status (only show when not pulling - dialog shows status during pull)
@@ -2619,7 +2833,8 @@ fn draw_pull_tab(f: &mut Frame, area: Rect, state: &mut State) {
         let status_style = if state.pull_status.contains("failed")
             || state.pull_status.contains("not connected")
             || state.pull_status.contains("Cancelled")
-            || state.pull_status.contains("cleared") {
+            || state.pull_status.contains("cleared")
+        {
             Style::new().red()
         } else {
             Style::new().green()
@@ -2653,10 +2868,12 @@ fn draw_pull_tab(f: &mut Frame, area: Rect, state: &mut State) {
 
         // Count files staged in memfs
         let memfs_files = state.memfs.list_files();
-        let new_staged_count = memfs_files.iter()
+        let new_staged_count = memfs_files
+            .iter()
             .filter(|(path, is_write)| *is_write && path.starts_with("new.database/"))
             .count();
-        let old_staged_count = memfs_files.iter()
+        let old_staged_count = memfs_files
+            .iter()
             .filter(|(path, is_write)| *is_write && path.starts_with("old.database/"))
             .count();
 
@@ -2671,12 +2888,20 @@ fn draw_pull_tab(f: &mut Frame, area: Rect, state: &mut State) {
                 Span::raw("Staged:     ").dark_gray(),
                 Span::styled(
                     format!("new.database/ {} files", new_staged_count),
-                    if new_staged_count > 0 { Style::new().yellow() } else { Style::new().white() }
+                    if new_staged_count > 0 {
+                        Style::new().yellow()
+                    } else {
+                        Style::new().white()
+                    },
                 ),
                 Span::raw("  |  ").dark_gray(),
                 Span::styled(
                     format!("old.database/ {} files", old_staged_count),
-                    if old_staged_count > 0 { Style::new().yellow() } else { Style::new().white() }
+                    if old_staged_count > 0 {
+                        Style::new().yellow()
+                    } else {
+                        Style::new().white()
+                    },
                 ),
             ]),
         ];
@@ -2712,7 +2937,10 @@ fn draw_claude_tab(f: &mut Frame, area: Rect, state: &mut State) {
     // Status message
     if padding.height > 0 {
         let status_msg = if has_both {
-            Span::styled("Both databases pulled - CLAUDE.md can be generated", Style::new().green())
+            Span::styled(
+                "Both databases pulled - CLAUDE.md can be generated",
+                Style::new().green(),
+            )
         } else {
             let mut missing = Vec::new();
             if !state.has_new_pulled() {
@@ -2722,7 +2950,10 @@ fn draw_claude_tab(f: &mut Frame, area: Rect, state: &mut State) {
                 missing.push("old");
             }
             Span::styled(
-                format!("Pull {} database(s) first to generate CLAUDE.md", missing.join(" and ")),
+                format!(
+                    "Pull {} database(s) first to generate CLAUDE.md",
+                    missing.join(" and ")
+                ),
                 Style::new().yellow(),
             )
         };
@@ -2744,7 +2975,10 @@ fn draw_claude_tab(f: &mut Frame, area: Rect, state: &mut State) {
         );
 
         let save_status = if in_memfs { " (Unsaved)" } else { " (Saved)" };
-        let title = format!(" CLAUDE.md - {} bytes, {} lines{} ", size, line_count, save_status);
+        let title = format!(
+            " CLAUDE.md - {} bytes, {} lines{} ",
+            size, line_count, save_status
+        );
 
         let border_style = if in_memfs {
             Style::new().yellow()
@@ -2765,7 +2999,10 @@ fn draw_claude_tab(f: &mut Frame, area: Rect, state: &mut State) {
             .enumerate()
             .map(|(i, line)| {
                 let line_num = i + 1;
-                let display_line: String = line.chars().take(preview_inner.width.saturating_sub(6) as usize).collect();
+                let display_line: String = line
+                    .chars()
+                    .take(preview_inner.width.saturating_sub(6) as usize)
+                    .collect();
                 Line::from(vec![
                     Span::styled(format!("{:4} ", line_num), Style::new().dark_gray()),
                     Span::raw(display_line),
@@ -2779,10 +3016,18 @@ fn draw_claude_tab(f: &mut Frame, area: Rect, state: &mut State) {
             let center_x = (preview_inner.width.saturating_sub(empty_text.len() as u16)) / 2;
             f.render_widget(
                 Paragraph::new(empty_text).style(Style::new().dark_gray().italic()),
-                Rect::new(preview_inner.x + center_x, preview_inner.y + center_y, empty_text.len() as u16, 1),
+                Rect::new(
+                    preview_inner.x + center_x,
+                    preview_inner.y + center_y,
+                    empty_text.len() as u16,
+                    1,
+                ),
             );
         } else {
-            f.render_widget(Paragraph::new(preview_lines).style(Style::new().white()), preview_inner);
+            f.render_widget(
+                Paragraph::new(preview_lines).style(Style::new().white()),
+                preview_inner,
+            );
         }
     }
 
@@ -2800,8 +3045,14 @@ fn draw_claude_tab(f: &mut Frame, area: Rect, state: &mut State) {
             Style::new().white()
         };
         let view_area = Rect::new(padding.x, view_btn_y, 18, 1);
-        f.render_widget(Paragraph::new("[ View Contents ]").style(view_style), view_area);
-        state.click_areas.push((ClickTarget::ClaudeButton(ClaudeButton::ViewContents), view_area));
+        f.render_widget(
+            Paragraph::new("[ View Contents ]").style(view_style),
+            view_area,
+        );
+        state.click_areas.push((
+            ClickTarget::ClaudeButton(ClaudeButton::ViewContents),
+            view_area,
+        ));
     }
 
     // Generate and Revert buttons
@@ -2825,8 +3076,14 @@ fn draw_claude_tab(f: &mut Frame, area: Rect, state: &mut State) {
             Style::new().dark_gray()
         };
         let generate_area = Rect::new(padding.x, action_btn_y, 14, 1);
-        f.render_widget(Paragraph::new("[ Generate ]").style(generate_style), generate_area);
-        state.click_areas.push((ClickTarget::ClaudeButton(ClaudeButton::Generate), generate_area));
+        f.render_widget(
+            Paragraph::new("[ Generate ]").style(generate_style),
+            generate_area,
+        );
+        state.click_areas.push((
+            ClickTarget::ClaudeButton(ClaudeButton::Generate),
+            generate_area,
+        ));
 
         // Revert button
         let revert_style = if active_btn == Some(ClaudeButton::Revert) {
@@ -2835,8 +3092,13 @@ fn draw_claude_tab(f: &mut Frame, area: Rect, state: &mut State) {
             Style::new().white()
         };
         let revert_area = Rect::new(padding.x + 16, action_btn_y, 12, 1);
-        f.render_widget(Paragraph::new("[ Revert ]").style(revert_style), revert_area);
-        state.click_areas.push((ClickTarget::ClaudeButton(ClaudeButton::Revert), revert_area));
+        f.render_widget(
+            Paragraph::new("[ Revert ]").style(revert_style),
+            revert_area,
+        );
+        state
+            .click_areas
+            .push((ClickTarget::ClaudeButton(ClaudeButton::Revert), revert_area));
     }
 }
 
@@ -2862,10 +3124,7 @@ fn draw_instruct_tab(f: &mut Frame, area: Rect, state: &mut State) {
 
     // Status message
     if padding.height > 0 {
-        let status_msg = Span::styled(
-            "This is extra instructions for Claude",
-            Style::new().cyan(),
-        );
+        let status_msg = Span::styled("This is extra instructions for Claude", Style::new().cyan());
         f.render_widget(
             Paragraph::new(Line::from(status_msg)),
             Rect::new(padding.x, padding.y, padding.width, 1),
@@ -2876,7 +3135,9 @@ fn draw_instruct_tab(f: &mut Frame, area: Rect, state: &mut State) {
     let textarea_start = 2u16;
     let button_height = 1u16;
     let gap = 1u16;
-    let textarea_height = padding.height.saturating_sub(textarea_start + button_height + gap);
+    let textarea_height = padding
+        .height
+        .saturating_sub(textarea_start + button_height + gap);
 
     if textarea_height > 2 {
         let textarea_area = Rect::new(
@@ -2906,10 +3167,14 @@ fn draw_instruct_tab(f: &mut Frame, area: Rect, state: &mut State) {
             Block::default()
                 .title(title)
                 .borders(Borders::ALL)
-                .border_style(border_style)
+                .border_style(border_style),
         );
-        state.instruct_textarea.set_cursor_line_style(Style::default());
-        state.instruct_textarea.set_line_number_style(Style::new().dark_gray());
+        state
+            .instruct_textarea
+            .set_cursor_line_style(Style::default());
+        state
+            .instruct_textarea
+            .set_line_number_style(Style::new().dark_gray());
 
         f.render_widget(&state.instruct_textarea, textarea_area);
     }
@@ -2936,7 +3201,9 @@ fn draw_instruct_tab(f: &mut Frame, area: Rect, state: &mut State) {
         };
         let save_area = Rect::new(padding.x, btn_y, 10, 1);
         f.render_widget(Paragraph::new("[ Save ]").style(save_style), save_area);
-        state.click_areas.push((ClickTarget::InstructButton(InstructButton::Save), save_area));
+        state
+            .click_areas
+            .push((ClickTarget::InstructButton(InstructButton::Save), save_area));
 
         // Revert button
         let revert_style = if active_btn == Some(InstructButton::Revert) {
@@ -2945,8 +3212,14 @@ fn draw_instruct_tab(f: &mut Frame, area: Rect, state: &mut State) {
             Style::new().white()
         };
         let revert_area = Rect::new(padding.x + 12, btn_y, 12, 1);
-        f.render_widget(Paragraph::new("[ Revert ]").style(revert_style), revert_area);
-        state.click_areas.push((ClickTarget::InstructButton(InstructButton::Revert), revert_area));
+        f.render_widget(
+            Paragraph::new("[ Revert ]").style(revert_style),
+            revert_area,
+        );
+        state.click_areas.push((
+            ClickTarget::InstructButton(InstructButton::Revert),
+            revert_area,
+        ));
     }
 }
 
@@ -2984,7 +3257,10 @@ fn draw_migration_tab(f: &mut Frame, area: Rect, state: &mut State) {
 
         // Build title with file info and save status
         let save_status = if in_memfs { " (Unsaved)" } else { " (Saved)" };
-        let title = format!(" MIGRATION.sql - {} bytes, {} lines{} ", size, line_count, save_status);
+        let title = format!(
+            " MIGRATION.sql - {} bytes, {} lines{} ",
+            size, line_count, save_status
+        );
 
         let border_style = if in_memfs {
             Style::new().yellow()
@@ -3007,7 +3283,10 @@ fn draw_migration_tab(f: &mut Frame, area: Rect, state: &mut State) {
             .map(|(i, line)| {
                 let line_num = i + 1;
                 // Truncate long lines
-                let display_line: String = line.chars().take(preview_inner.width.saturating_sub(6) as usize).collect();
+                let display_line: String = line
+                    .chars()
+                    .take(preview_inner.width.saturating_sub(6) as usize)
+                    .collect();
                 Line::from(vec![
                     Span::styled(format!("{:4} ", line_num), Style::new().dark_gray()),
                     Span::raw(display_line),
@@ -3022,10 +3301,18 @@ fn draw_migration_tab(f: &mut Frame, area: Rect, state: &mut State) {
             let center_x = (preview_inner.width.saturating_sub(empty_text.len() as u16)) / 2;
             f.render_widget(
                 Paragraph::new(empty_text).style(Style::new().dark_gray().italic()),
-                Rect::new(preview_inner.x + center_x, preview_inner.y + center_y, empty_text.len() as u16, 1),
+                Rect::new(
+                    preview_inner.x + center_x,
+                    preview_inner.y + center_y,
+                    empty_text.len() as u16,
+                    1,
+                ),
             );
         } else {
-            f.render_widget(Paragraph::new(preview_lines).style(Style::new().white()), preview_inner);
+            f.render_widget(
+                Paragraph::new(preview_lines).style(Style::new().white()),
+                preview_inner,
+            );
         }
     }
 
@@ -3057,8 +3344,14 @@ fn draw_migration_tab(f: &mut Frame, area: Rect, state: &mut State) {
             Style::new().white()
         };
         let view_area = Rect::new(padding.x, view_btn_y, 18, 1);
-        f.render_widget(Paragraph::new("[ View Contents ]").style(view_style), view_area);
-        state.click_areas.push((ClickTarget::MigrationButton(MigrationButton::ViewContents), view_area));
+        f.render_widget(
+            Paragraph::new("[ View Contents ]").style(view_style),
+            view_area,
+        );
+        state.click_areas.push((
+            ClickTarget::MigrationButton(MigrationButton::ViewContents),
+            view_area,
+        ));
     }
 
     // Clear and Undo Clear buttons
@@ -3077,7 +3370,10 @@ fn draw_migration_tab(f: &mut Frame, area: Rect, state: &mut State) {
         };
         let clear_area = Rect::new(padding.x, action_btn_y, 11, 1);
         f.render_widget(Paragraph::new("[ Clear ]").style(clear_style), clear_area);
-        state.click_areas.push((ClickTarget::MigrationButton(MigrationButton::Clear), clear_area));
+        state.click_areas.push((
+            ClickTarget::MigrationButton(MigrationButton::Clear),
+            clear_area,
+        ));
 
         // Undo Clear button
         let undo_style = if active_btn == Some(MigrationButton::UndoClear) {
@@ -3086,8 +3382,14 @@ fn draw_migration_tab(f: &mut Frame, area: Rect, state: &mut State) {
             Style::new().white()
         };
         let undo_area = Rect::new(padding.x + 13, action_btn_y, 16, 1);
-        f.render_widget(Paragraph::new("[ Undo Clear ]").style(undo_style), undo_area);
-        state.click_areas.push((ClickTarget::MigrationButton(MigrationButton::UndoClear), undo_area));
+        f.render_widget(
+            Paragraph::new("[ Undo Clear ]").style(undo_style),
+            undo_area,
+        );
+        state.click_areas.push((
+            ClickTarget::MigrationButton(MigrationButton::UndoClear),
+            undo_area,
+        ));
     }
 }
 
@@ -3106,11 +3408,7 @@ fn draw_migration_dialog(f: &mut Frame, area: Rect, state: &State) {
     let visible_height = dialog_height.saturating_sub(4); // account for borders and title
     let max_scroll = (line_count as u16).saturating_sub(visible_height);
     let scroll_info = if max_scroll > 0 {
-        format!(
-            " (line {}/{}) ",
-            state.migration_scroll + 1,
-            line_count
-        )
+        format!(" (line {}/{}) ", state.migration_scroll + 1, line_count)
     } else {
         String::new()
     };
@@ -3159,11 +3457,7 @@ fn draw_claude_dialog(f: &mut Frame, area: Rect, state: &State) {
     let visible_height = dialog_height.saturating_sub(4);
     let max_scroll = (line_count as u16).saturating_sub(visible_height);
     let scroll_info = if max_scroll > 0 {
-        format!(
-            " (line {}/{}) ",
-            state.claude_scroll + 1,
-            line_count
-        )
+        format!(" (line {}/{}) ", state.claude_scroll + 1, line_count)
     } else {
         String::new()
     };
@@ -3211,11 +3505,7 @@ fn draw_instruct_dialog(f: &mut Frame, area: Rect, state: &State) {
     let visible_height = dialog_height.saturating_sub(4);
     let max_scroll = (line_count as u16).saturating_sub(visible_height);
     let scroll_info = if max_scroll > 0 {
-        format!(
-            " (line {}/{}) ",
-            state.instruct_scroll + 1,
-            line_count
-        )
+        format!(" (line {}/{}) ", state.instruct_scroll + 1, line_count)
     } else {
         String::new()
     };
@@ -3282,12 +3572,19 @@ fn draw_pull_dialog(f: &mut Frame, area: Rect, state: &mut State) {
         Paragraph::new(cancel_label).style(Style::new().red()),
         cancel_area,
     );
-    state.click_areas.push((ClickTarget::PullButton(PullButton::Pull), cancel_area));
+    state
+        .click_areas
+        .push((ClickTarget::PullButton(PullButton::Pull), cancel_area));
 
     // Help text
     f.render_widget(
         Paragraph::new("Press Esc or C to cancel").style(Style::new().dark_gray()),
-        Rect::new(inner.x + 1, inner.y + inner.height.saturating_sub(1), inner.width.saturating_sub(2), 1),
+        Rect::new(
+            inner.x + 1,
+            inner.y + inner.height.saturating_sub(1),
+            inner.width.saturating_sub(2),
+            1,
+        ),
     );
 }
 
@@ -3312,7 +3609,13 @@ fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
     if y < padding.y + padding.height {
         let dbtype_area = Rect::new(padding.x, y, padding.width, 1);
         let active = matches!(state.focus, Focus::SetupDbType);
-        draw_dbtype_toggle(f, dbtype_area, state.database_type, active, &mut state.click_areas);
+        draw_dbtype_toggle(
+            f,
+            dbtype_area,
+            state.database_type,
+            active,
+            &mut state.click_areas,
+        );
         y += 2;
     }
 
@@ -3350,7 +3653,9 @@ fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
             };
             let init_area = Rect::new(padding.x, y, 14, 1);
             f.render_widget(Paragraph::new("[ Git Init ]").style(init_style), init_area);
-            state.click_areas.push((ClickTarget::GitButton(GitButton::Init), init_area));
+            state
+                .click_areas
+                .push((ClickTarget::GitButton(GitButton::Init), init_area));
         }
     } else {
         // Has git repository - show status
@@ -3370,7 +3675,10 @@ fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
         // Status indicator
         if y < padding.y + padding.height {
             let (status_text, status_style) = if state.git_clean {
-                ("Status: Clean (no uncommitted changes)", Style::new().green())
+                (
+                    "Status: Clean (no uncommitted changes)",
+                    Style::new().green(),
+                )
             } else {
                 ("Status: Dirty (uncommitted changes)", Style::new().yellow())
             };
@@ -3403,15 +3711,18 @@ fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
             }
 
             // Show "and X more..." if there are more files
-            if state.git_status_lines.len() > max_files {
-                if y < padding.y + padding.height.saturating_sub(4) {
-                    f.render_widget(
-                        Paragraph::new(format!("  ... and {} more", state.git_status_lines.len() - max_files))
-                            .style(Style::new().dark_gray().italic()),
-                        Rect::new(padding.x, y, padding.width, 1),
-                    );
-                    y += 1;
-                }
+            if state.git_status_lines.len() > max_files
+                && y < padding.y + padding.height.saturating_sub(4)
+            {
+                f.render_widget(
+                    Paragraph::new(format!(
+                        "  ... and {} more",
+                        state.git_status_lines.len() - max_files
+                    ))
+                    .style(Style::new().dark_gray().italic()),
+                    Rect::new(padding.x, y, padding.width, 1),
+                );
+                y += 1;
             }
 
             y += 1;
@@ -3428,8 +3739,13 @@ fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
                     Style::new().green()
                 };
                 let commit_area = Rect::new(padding.x, btn_y, 16, 1);
-                f.render_widget(Paragraph::new("[ Commit All ]").style(commit_style), commit_area);
-                state.click_areas.push((ClickTarget::GitButton(GitButton::CommitAll), commit_area));
+                f.render_widget(
+                    Paragraph::new("[ Commit All ]").style(commit_style),
+                    commit_area,
+                );
+                state
+                    .click_areas
+                    .push((ClickTarget::GitButton(GitButton::CommitAll), commit_area));
 
                 // Refresh button
                 let refresh_style = if active_btn == Some(GitButton::Refresh) {
@@ -3438,8 +3754,13 @@ fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
                     Style::new().white()
                 };
                 let refresh_area = Rect::new(padding.x + 18, btn_y, 13, 1);
-                f.render_widget(Paragraph::new("[ Refresh ]").style(refresh_style), refresh_area);
-                state.click_areas.push((ClickTarget::GitButton(GitButton::Refresh), refresh_area));
+                f.render_widget(
+                    Paragraph::new("[ Refresh ]").style(refresh_style),
+                    refresh_area,
+                );
+                state
+                    .click_areas
+                    .push((ClickTarget::GitButton(GitButton::Refresh), refresh_area));
             } else {
                 // Only refresh button when clean
                 let refresh_style = if active_btn == Some(GitButton::Refresh) {
@@ -3448,8 +3769,13 @@ fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
                     Style::new().white()
                 };
                 let refresh_area = Rect::new(padding.x, btn_y, 13, 1);
-                f.render_widget(Paragraph::new("[ Refresh ]").style(refresh_style), refresh_area);
-                state.click_areas.push((ClickTarget::GitButton(GitButton::Refresh), refresh_area));
+                f.render_widget(
+                    Paragraph::new("[ Refresh ]").style(refresh_style),
+                    refresh_area,
+                );
+                state
+                    .click_areas
+                    .push((ClickTarget::GitButton(GitButton::Refresh), refresh_area));
             }
         }
     }
@@ -3533,8 +3859,16 @@ fn draw_tls_toggle(
     );
 
     let no_tls_selected = current == TlsMode::Disable;
-    let no_tls_text = if no_tls_selected { "● No TLS" } else { "○ No TLS" };
-    let tls_text = if !no_tls_selected { "● TLS" } else { "○ TLS" };
+    let no_tls_text = if no_tls_selected {
+        "● No TLS"
+    } else {
+        "○ No TLS"
+    };
+    let tls_text = if !no_tls_selected {
+        "● TLS"
+    } else {
+        "○ TLS"
+    };
 
     let style = if active {
         Style::new().cyan()
@@ -3545,7 +3879,12 @@ fn draw_tls_toggle(
     let no_tls_width = 8u16;
     let tls_width = 5u16;
     let no_tls_area = Rect::new(options_area.x, options_area.y, no_tls_width, 1);
-    let tls_area = Rect::new(options_area.x + no_tls_width + 2, options_area.y, tls_width, 1);
+    let tls_area = Rect::new(
+        options_area.x + no_tls_width + 2,
+        options_area.y,
+        tls_width,
+        1,
+    );
 
     f.render_widget(Paragraph::new(no_tls_text).style(style), no_tls_area);
     f.render_widget(Paragraph::new(tls_text).style(style), tls_area);
@@ -3598,13 +3937,25 @@ fn draw_bottom_bar(f: &mut Frame, area: Rect, state: &mut State) {
     let save_label = "[ Save and Close ]";
     let cancel_label = "[ Cancel ]";
     let save_area = Rect::new(buttons_area.x, buttons_area.y, save_label.len() as u16, 1);
-    let cancel_area = Rect::new(buttons_area.x + save_label.len() as u16 + 2, buttons_area.y, cancel_label.len() as u16, 1);
+    let cancel_area = Rect::new(
+        buttons_area.x + save_label.len() as u16 + 2,
+        buttons_area.y,
+        cancel_label.len() as u16,
+        1,
+    );
 
     f.render_widget(Paragraph::new(save_label).style(save_style), save_area);
-    f.render_widget(Paragraph::new(cancel_label).style(cancel_style), cancel_area);
+    f.render_widget(
+        Paragraph::new(cancel_label).style(cancel_style),
+        cancel_area,
+    );
 
-    state.click_areas.push((ClickTarget::BottomButton(BottomButton::Save), save_area));
-    state.click_areas.push((ClickTarget::BottomButton(BottomButton::Cancel), cancel_area));
+    state
+        .click_areas
+        .push((ClickTarget::BottomButton(BottomButton::Save), save_area));
+    state
+        .click_areas
+        .push((ClickTarget::BottomButton(BottomButton::Cancel), cancel_area));
 }
 
 fn draw_unsaved_dialog(
@@ -3649,15 +4000,24 @@ fn draw_unsaved_dialog(
     } else {
         Style::new().green()
     };
-    f.render_widget(Paragraph::new("[ Save & Close ]").style(save_style), buttons[0]);
-    clicks.push((ClickTarget::DialogButton(DialogButton::SaveAndClose), buttons[0]));
+    f.render_widget(
+        Paragraph::new("[ Save & Close ]").style(save_style),
+        buttons[0],
+    );
+    clicks.push((
+        ClickTarget::DialogButton(DialogButton::SaveAndClose),
+        buttons[0],
+    ));
 
     let discard_style = if selected == DialogButton::Discard {
         Style::new().red().bold().reversed()
     } else {
         Style::new().red()
     };
-    f.render_widget(Paragraph::new("[ Discard ]").style(discard_style), buttons[1]);
+    f.render_widget(
+        Paragraph::new("[ Discard ]").style(discard_style),
+        buttons[1],
+    );
     clicks.push((ClickTarget::DialogButton(DialogButton::Discard), buttons[1]));
 
     let cancel_style = if selected == DialogButton::Cancel {
@@ -3679,15 +4039,21 @@ fn generate_claude_md(state: &State) -> String {
     // Reference to INSTRUCT.md at the top
     content.push_str("**IMPORTANT: Also read `INSTRUCT.md` for additional instructions specific to this project.**\n\n");
 
-    content.push_str("This file provides instructions for Claude to assist with PostgreSQL schema migrations.\n");
-    content.push_str("It is auto-generated by `pgcmp init` and should be regenerated after pulling schemas.\n\n");
+    content.push_str(
+        "This file provides instructions for Claude to assist with PostgreSQL schema migrations.\n",
+    );
+    content.push_str(
+        "It is auto-generated by `pgcmp init` and should be regenerated after pulling schemas.\n\n",
+    );
 
     // Project files and restrictions
     content.push_str("## Project Files\n\n");
     content.push_str("This project contains the following top-level items:\n\n");
     content.push_str("- `INSTRUCT.md` - Extra instructions for Claude (read this first!)\n");
     content.push_str("- `MIGRATION.sql` - The SQL migration script you will edit\n");
-    content.push_str("- `old.database/` - Schema extracted from the OLD database (current production state)\n");
+    content.push_str(
+        "- `old.database/` - Schema extracted from the OLD database (current production state)\n",
+    );
     content.push_str("- `new.database/` - Schema extracted from the NEW database (target state to migrate to)\n\n");
 
     content.push_str("Each database directory contains one `.sql` file per PostgreSQL schema (e.g., `public.sql`).\n");
@@ -3697,16 +4063,23 @@ fn generate_claude_md(state: &State) -> String {
     content.push_str("Do not read CONFIG.toml, CLAUDE.md, or any other files. Only read:\n");
     content.push_str("- `INSTRUCT.md` (for extra project-specific instructions)\n");
     content.push_str("- `MIGRATION.sql` (to view/edit the migration script)\n");
-    content.push_str("- Files under `old.database/` (to see current schema, e.g., `old.database/public.sql`)\n");
-    content.push_str("- Files under `new.database/` (to see target schema, e.g., `new.database/public.sql`)\n\n");
+    content.push_str(
+        "- Files under `old.database/` (to see current schema, e.g., `old.database/public.sql`)\n",
+    );
+    content.push_str(
+        "- Files under `new.database/` (to see target schema, e.g., `new.database/public.sql`)\n\n",
+    );
 
     // Operating loop
     content.push_str("## Operating Loop\n\n");
     content.push_str("**YOU MUST IMPLEMENT THE ACTIONS SPECIFIED IN THE OUTPUT OF `pgcmp test` AS THE PRIMARY SOURCE OF DIRECTION.**\n\n");
     content.push_str("**IMPORTANT: Always use `pgcmp test` to identify differences. Do NOT manually diff the schema files.**\n\n");
     content.push_str("Follow this loop to develop the migration:\n\n");
-    content.push_str("1. **Run `pgcmp test`** to see what differences exist between old and new schemas\n");
-    content.push_str("2. **Analyze the XML output** to understand what SQL statements are needed\n");
+    content.push_str(
+        "1. **Run `pgcmp test`** to see what differences exist between old and new schemas\n",
+    );
+    content
+        .push_str("2. **Analyze the XML output** to understand what SQL statements are needed\n");
     content.push_str("3. **Edit `MIGRATION.sql`** to add SQL statements that transform old schema to match new\n");
     content.push_str("4. **Run `pgcmp test` again** to verify your changes (runs in a transaction with rollback)\n");
     content.push_str("5. **Repeat until `pgcmp test` shows zero differences** - then the migration is complete\n\n");
@@ -3727,12 +4100,19 @@ fn generate_claude_md(state: &State) -> String {
     content.push_str("- Last statement MUST be `ROLLBACK;`\n");
     content.push_str("- Do NOT put `COMMIT` anywhere in the file\n");
     content.push_str("- Do NOT put extra `BEGIN` or `ROLLBACK` statements in the middle\n\n");
-    content.push_str("This format ensures migrations cannot be accidentally applied. The `pgcmp test`\n");
-    content.push_str("command validates this structure before running. To actually apply a migration,\n");
-    content.push_str("use `pgcmp apply --commit` which overrides the final ROLLBACK with COMMIT.\n\n");
+    content.push_str(
+        "This format ensures migrations cannot be accidentally applied. The `pgcmp test`\n",
+    );
+    content.push_str(
+        "command validates this structure before running. To actually apply a migration,\n",
+    );
+    content
+        .push_str("use `pgcmp apply --commit` which overrides the final ROLLBACK with COMMIT.\n\n");
 
     content.push_str("**Use DO blocks for procedural logic.**\n\n");
-    content.push_str("When you need loops, conditionals, or other procedural logic in your migration,\n");
+    content.push_str(
+        "When you need loops, conditionals, or other procedural logic in your migration,\n",
+    );
     content.push_str("use PostgreSQL's anonymous `DO` blocks:\n\n");
     content.push_str("```sql\n");
     content.push_str("DO $$\n");
@@ -3744,28 +4124,41 @@ fn generate_claude_md(state: &State) -> String {
     content.push_str("END\n");
     content.push_str("$$;\n");
     content.push_str("```\n\n");
-    content.push_str("Note: `BEGIN`/`END` inside DO blocks and function bodies are PL/pgSQL block\n");
+    content
+        .push_str("Note: `BEGIN`/`END` inside DO blocks and function bodies are PL/pgSQL block\n");
     content.push_str("delimiters, NOT transaction control - these are perfectly fine to use.\n\n");
 
     content.push_str("### Understanding the Test Output\n\n");
     content.push_str("The `pgcmp test` command outputs XML showing:\n");
     content.push_str("- **Objects only in NEW**: Need to be created in the migration\n");
-    content.push_str("- **Objects only in OLD**: May need to be dropped (or might be intentionally different)\n");
+    content.push_str(
+        "- **Objects only in OLD**: May need to be dropped (or might be intentionally different)\n",
+    );
     content.push_str("- **Objects that differ**: Need to be altered to match the new schema\n\n");
 
     content.push_str("### When to Read Schema Files\n\n");
-    content.push_str("The schema files under `old.database/` and `new.database/` are for **context only**.\n");
+    content.push_str(
+        "The schema files under `old.database/` and `new.database/` are for **context only**.\n",
+    );
     content.push_str("You should:\n");
-    content.push_str("- **DO** read a schema file when you need full DDL details for a specific object\n");
+    content.push_str(
+        "- **DO** read a schema file when you need full DDL details for a specific object\n",
+    );
     content.push_str("- **DO** read schema files to understand table structures, column types, or function bodies\n");
     content.push_str("- **DO NOT** try to manually diff the schema files to find differences\n");
     content.push_str("- **DO NOT** read schema files unless you need specific context for writing migration SQL\n\n");
     content.push_str("Always rely on `pgcmp test` output to identify what needs to change.\n\n");
 
     content.push_str("### Important: Row Counts\n\n");
-    content.push_str("In most cases, the total row count for each table must remain the same after migration.\n");
-    content.push_str("If a table was dropped and another similar table was created, a data migration may be\n");
-    content.push_str("needed to maintain the row count. If you believe there is a justification for the row\n");
+    content.push_str(
+        "In most cases, the total row count for each table must remain the same after migration.\n",
+    );
+    content.push_str(
+        "If a table was dropped and another similar table was created, a data migration may be\n",
+    );
+    content.push_str(
+        "needed to maintain the row count. If you believe there is a justification for the row\n",
+    );
     content.push_str("count being different (e.g., the table is genuinely new or being intentionally removed),\n");
     content.push_str("you MUST explain this to the user before proceeding.\n\n");
 

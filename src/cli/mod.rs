@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "pgcmp")]
-#[command(about = "PostgreSQL schema comparison tool for Claude-assisted migrations")]
+#[command(
+    about = "PostgreSQL schema comparison and migration testing, built for AI-assisted migration authoring"
+)]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]

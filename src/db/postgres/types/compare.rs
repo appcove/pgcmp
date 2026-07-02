@@ -50,7 +50,12 @@ pub fn compare_types(old: &TypeInfo, new: &TypeInfo) -> TypeDiff {
     }
 }
 
-fn compare_enum_types(old: &TypeInfo, new: &TypeInfo, full_name: &str, differences: &mut Vec<String>) {
+fn compare_enum_types(
+    old: &TypeInfo,
+    new: &TypeInfo,
+    full_name: &str,
+    differences: &mut Vec<String>,
+) {
     // Check for added enum values
     for (idx, label) in new.enum_labels.iter().enumerate() {
         if !old.enum_labels.contains(label) {
@@ -146,7 +151,12 @@ fn compare_composite_types(
     }
 }
 
-fn compare_domain_types(old: &TypeInfo, new: &TypeInfo, full_name: &str, differences: &mut Vec<String>) {
+fn compare_domain_types(
+    old: &TypeInfo,
+    new: &TypeInfo,
+    full_name: &str,
+    differences: &mut Vec<String>,
+) {
     // Check base type
     if old.domain_base_type != new.domain_base_type {
         differences.push(format!(
@@ -221,7 +231,12 @@ fn compare_domain_types(old: &TypeInfo, new: &TypeInfo, full_name: &str, differe
     }
 }
 
-fn compare_range_types(old: &TypeInfo, new: &TypeInfo, full_name: &str, differences: &mut Vec<String>) {
+fn compare_range_types(
+    old: &TypeInfo,
+    new: &TypeInfo,
+    full_name: &str,
+    differences: &mut Vec<String>,
+) {
     if old.range_subtype != new.range_subtype {
         differences.push(format!(
             "RANGE SUBTYPE: {} — change subtype from {:?} to {:?} (requires recreating)",
