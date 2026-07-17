@@ -76,6 +76,11 @@ pub async fn fetch_types(client: &Client) -> anyhow::Result<Vec<TypeInfo>> {
             WHERE t.typtype = 'e'
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend d
+                  WHERE d.classid = 'pg_type'::regclass
+                    AND d.objid = t.oid AND d.deptype = 'e'
+              )
             GROUP BY n.nspname, t.typname
             ORDER BY n.nspname, t.typname
             "#,
@@ -119,6 +124,11 @@ pub async fn fetch_types(client: &Client) -> anyhow::Result<Vec<TypeInfo>> {
               AND c.relkind = 'c'  -- composite type, not table
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend d
+                  WHERE d.classid = 'pg_type'::regclass
+                    AND d.objid = t.oid AND d.deptype = 'e'
+              )
             GROUP BY n.nspname, t.typname
             ORDER BY n.nspname, t.typname
             "#,
@@ -169,6 +179,11 @@ pub async fn fetch_types(client: &Client) -> anyhow::Result<Vec<TypeInfo>> {
             WHERE t.typtype = 'd'
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend d
+                  WHERE d.classid = 'pg_type'::regclass
+                    AND d.objid = t.oid AND d.deptype = 'e'
+              )
             ORDER BY n.nspname, t.typname
             "#,
             &[],
@@ -211,6 +226,11 @@ pub async fn fetch_types(client: &Client) -> anyhow::Result<Vec<TypeInfo>> {
             WHERE t.typtype = 'r'
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend d
+                  WHERE d.classid = 'pg_type'::regclass
+                    AND d.objid = t.oid AND d.deptype = 'e'
+              )
             ORDER BY n.nspname, t.typname
             "#,
             &[],

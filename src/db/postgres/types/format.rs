@@ -1,4 +1,5 @@
 use super::fetch::{TypeInfo, TypeKind};
+use crate::db::postgres::quoting::quote_ident;
 
 /// Format a type into CREATE TYPE/DOMAIN DDL
 pub fn format_type_ddl(type_info: &TypeInfo) -> String {
@@ -91,18 +92,4 @@ fn format_range_ddl(type_info: &TypeInfo) -> String {
         quote_ident(&type_info.type_name),
         parts.join(",\n    ")
     )
-}
-
-/// Quote an identifier if needed
-fn quote_ident(name: &str) -> String {
-    let needs_quoting = name.chars().next().is_none_or(|c| !c.is_ascii_lowercase())
-        || name
-            .chars()
-            .any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_');
-
-    if needs_quoting {
-        format!("\"{}\"", name.replace('"', "\"\""))
-    } else {
-        name.to_string()
-    }
 }

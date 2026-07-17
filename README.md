@@ -95,7 +95,7 @@ This makes the file safe by construction: running it in `psql` by accident appli
 
 ## What it compares
 
-Schemas, types (enums, composites, domains, ranges), tables, columns (type, nullability, defaults), views, materialized views, functions, indexes, constraints, triggers, and sequences.
+Schemas, extensions (name, version, install schema), types (enums, composites, domains, ranges), tables, columns (type, nullability, defaults), views, materialized views, functions, indexes, constraints, triggers, and sequences. Objects owned by extensions are not listed separately — install or drop the extension instead.
 
 For each difference, the report states the action needed to converge the old schema on the new one (`create table app.orders`, `alter column app.users.email`, `drop index app.stale_idx`, ...) with old/new details for modifications. `pgcmp test` additionally reports per-table row count changes so data migrations are verifiable too.
 
@@ -108,14 +108,14 @@ my-migration/
 ├── CONFIG.toml           # connection config for both databases
 ├── MIGRATION.sql         # the migration you're authoring
 ├── new.database/         # target schema (what you want)
-│   └── {schema}.schema/
-│       ├── users.table.sql
-│       ├── active_users.view.sql
-│       └── get_user.function.sql
+│   ├── public.sql        # one file per PostgreSQL schema
+│   └── app.sql
 └── old.database/         # current schema (what you have)
-    └── {schema}.schema/
-        └── ...
+    ├── public.sql
+    └── app.sql
 ```
+
+Each `{schema}.sql` file contains the schema's DDL grouped into sections by object type (extensions, types, sequences, tables, indexes, constraints, views, materialized views, functions, triggers).
 
 `CONFIG.toml`:
 

@@ -1960,6 +1960,25 @@ async fn do_pull(
 
         check_cancel!();
         let _ = tx
+            .send(PullMessage::Status(
+                "New DB: extracting extensions...".into(),
+            ))
+            .await;
+        match crate::db::postgres::extensions::extract_extensions(conn.client()).await {
+            Ok(objs) => data.new_objects.extend(objs),
+            Err(e) => {
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract extensions: {}",
+                        e
+                    ))))
+                    .await;
+                return;
+            }
+        }
+
+        check_cancel!();
+        let _ = tx
             .send(PullMessage::Status("New DB: extracting types...".into()))
             .await;
         match crate::db::postgres::types::extract_types(conn.client()).await {
@@ -2145,6 +2164,25 @@ async fn do_pull(
                 return;
             }
         };
+
+        check_cancel!();
+        let _ = tx
+            .send(PullMessage::Status(
+                "Old DB: extracting extensions...".into(),
+            ))
+            .await;
+        match crate::db::postgres::extensions::extract_extensions(conn.client()).await {
+            Ok(objs) => data.old_objects.extend(objs),
+            Err(e) => {
+                let _ = tx
+                    .send(PullMessage::Done(Err(format!(
+                        "Failed to extract extensions: {}",
+                        e
+                    ))))
+                    .await;
+                return;
+            }
+        }
 
         check_cancel!();
         let _ = tx

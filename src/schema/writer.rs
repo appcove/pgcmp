@@ -35,15 +35,16 @@ pub fn group_by_schema(objects: &[SchemaObject]) -> BTreeMap<String, Vec<&Schema
         objects.sort_by(|a, b| {
             let type_order = |t: ObjectType| -> u8 {
                 match t {
-                    ObjectType::Type => 0,
-                    ObjectType::Sequence => 1,
-                    ObjectType::Table => 2,
-                    ObjectType::Index => 3,
-                    ObjectType::Constraint => 4,
-                    ObjectType::View => 5,
-                    ObjectType::MaterializedView => 6,
-                    ObjectType::Function => 7,
-                    ObjectType::Trigger => 8,
+                    ObjectType::Extension => 0,
+                    ObjectType::Type => 1,
+                    ObjectType::Sequence => 2,
+                    ObjectType::Table => 3,
+                    ObjectType::Index => 4,
+                    ObjectType::Constraint => 5,
+                    ObjectType::View => 6,
+                    ObjectType::MaterializedView => 7,
+                    ObjectType::Function => 8,
+                    ObjectType::Trigger => 9,
                 }
             };
             type_order(a.object_type)
@@ -109,6 +110,7 @@ pub fn generate_schema_content(schema_name: &str, objects: Vec<SchemaObject>) ->
 
 fn object_type_label(t: ObjectType) -> &'static str {
     match t {
+        ObjectType::Extension => "Extension",
         ObjectType::Type => "Type",
         ObjectType::Table => "Table",
         ObjectType::View => "View",
@@ -123,6 +125,7 @@ fn object_type_label(t: ObjectType) -> &'static str {
 
 fn object_type_plural(t: ObjectType) -> &'static str {
     match t {
+        ObjectType::Extension => "EXTENSIONS",
         ObjectType::Type => "TYPES",
         ObjectType::Table => "TABLES",
         ObjectType::View => "VIEWS",

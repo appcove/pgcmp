@@ -32,9 +32,9 @@ pgcmp is a PostgreSQL schema comparison CLI tool written in Rust. It compares "n
 - **`src/db/`** - Database connectivity and schema extraction
   - `connection.rs` - tokio-postgres connection wrapper with 2s timeout
   - `extraction.rs` - Coordinates extraction of all object types
-  - Individual files for each object type (tables, views, functions, indexes, constraints, triggers, sequences)
+  - Individual files for each object type (extensions, types, tables, views, functions, indexes, constraints, triggers, sequences)
 - **`src/schema/`** - Schema object types and file writing
-  - `ObjectType` enum maps to file extensions (e.g., `.table.sql`, `.view.sql`)
+  - `ObjectType` enum includes Extension, Type, Table, View, MaterializedView, Function, Index, Constraint, Trigger, Sequence
   - `SchemaObject` represents extracted DDL with schema/object names
 - **`src/config.rs`** - CONFIG.toml parsing with `DbConfig` (host, port, user, password, database, tls)
 - **`src/comparison/`** - Schema diffing logic
@@ -48,16 +48,9 @@ pgcmp is a PostgreSQL schema comparison CLI tool written in Rust. It compares "n
 - Connection strings use `sslmode` parameter based on `TlsMode` (disable/require)
 - Background connection testing uses `tokio::sync::oneshot` channels
 
-### File Naming Convention
+### Schema File Layout
 
-Schema objects are written to files as `{object_name}.{type}.sql`:
-- Tables: `users.table.sql`
-- Views: `active_users.view.sql`
-- Functions: `get_user.function.sql`
-- Indexes: `users_email_idx.index.sql`
-- Constraints: `orders_user_fk.constraint.sql`
-- Triggers: `audit_trigger.trigger.sql`
-- Sequences: `users_id_seq.sequence.sql`
+`pull` writes one `.sql` file per PostgreSQL schema (`src/schema/writer.rs`). Within each file, objects are grouped into sections by type in dependency-friendly order: extensions, types, sequences, tables, indexes, constraints, views, materialized views, functions, triggers.
 
 ### User Project Structure (created by init)
 
@@ -66,11 +59,9 @@ project/
 ├── CONFIG.toml           # Database connection config
 ├── MIGRATION.sql         # User writes migration SQL here
 ├── new.database/         # Target schema (what we want)
-│   └── {schema}.schema/
-│       └── {object}.{type}.sql
+│   └── {schema}.sql      # e.g. public.sql
 └── old.database/         # Current schema (what we have)
-    └── {schema}.schema/
-        └── {object}.{type}.sql
+    └── {schema}.sql
 ```
 
 ### Migration File Format

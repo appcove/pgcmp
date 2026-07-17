@@ -3,6 +3,7 @@ use crate::cli::DiffArgs;
 use crate::config::Config;
 use crate::db::postgres::DbConnection;
 use crate::db::postgres::constraints::fetch_constraints;
+use crate::db::postgres::extensions::fetch_extensions;
 use crate::db::postgres::functions::fetch_functions;
 use crate::db::postgres::indexes::fetch_indexes;
 use crate::db::postgres::sequences::fetch_sequences;
@@ -101,6 +102,7 @@ struct ObjectAnalysis {
 struct AnalysisResult {
     summary: Vec<SummaryRow>,
     schemas: Vec<ObjectAnalysis>,
+    extensions: Vec<ObjectAnalysis>,
     types: Vec<ObjectAnalysis>,
     tables: Vec<ObjectAnalysis>,
     columns: Vec<ObjectAnalysis>,
@@ -116,6 +118,7 @@ struct AnalysisResult {
 impl AnalysisResult {
     fn has_differences(&self) -> bool {
         !self.schemas.is_empty()
+            || !self.extensions.is_empty()
             || !self.types.is_empty()
             || !self.tables.is_empty()
             || !self.columns.is_empty()
@@ -130,6 +133,7 @@ impl AnalysisResult {
 
     fn count_differences(&self) -> usize {
         self.schemas.len()
+            + self.extensions.len()
             + self.types.len()
             + self.tables.len()
             + self.columns.len()
@@ -186,6 +190,11 @@ async fn analyze_databases(
     let (left_types, right_types) =
         tokio::try_join!(fetch_types(left_client), fetch_types(right_client))?;
 
+    let (left_extensions, right_extensions) = tokio::try_join!(
+        fetch_extensions(left_client),
+        fetch_extensions(right_client)
+    )?;
+
     // Extract schemas from tables
     let left_schemas: HashSet<&str> = left_tables.iter().map(|t| t.schema_name.as_str()).collect();
     let right_schemas: HashSet<&str> = right_tables
@@ -199,6 +208,11 @@ async fn analyze_databases(
             object_type: "Schemas",
             left_count: left_schemas.len(),
             right_count: right_schemas.len(),
+        },
+        SummaryRow {
+            object_type: "Extensions",
+            left_count: left_extensions.len(),
+            right_count: right_extensions.len(),
         },
         SummaryRow {
             object_type: "Types",
@@ -255,6 +269,9 @@ async fn analyze_databases(
     // Analyze schemas
     let schemas = analyze_schemas(&left_schemas, &right_schemas);
 
+    // Analyze extensions
+    let extensions = analyze_extensions(&left_extensions, &right_extensions);
+
     // Analyze types
     let types = analyze_types(&left_types, &right_types);
 
@@ -283,6 +300,7 @@ async fn analyze_databases(
     Ok(AnalysisResult {
         summary,
         schemas,
+        extensions,
         types,
         tables,
         columns,
@@ -294,6 +312,89 @@ async fn analyze_databases(
         triggers,
         sequences,
     })
+}
+
+fn analyze_extensions(
+    left: &[crate::db::postgres::extensions::ExtensionInfo],
+    right: &[crate::db::postgres::extensions::ExtensionInfo],
+) -> Vec<ObjectAnalysis> {
+    use crate::db::postgres::extensions::ExtensionInfo;
+
+    let left_map: HashMap<&str, &ExtensionInfo> =
+        left.iter().map(|e| (e.name.as_str(), e)).collect();
+
+    let right_map: HashMap<&str, &ExtensionInfo> =
+        right.iter().map(|e| (e.name.as_str(), e)).collect();
+
+    let mut result = Vec::new();
+
+    // Check for extensions to create (in left but not in right)
+    for ext in left {
+        if let Some(right_ext) = right_map.get(ext.name.as_str()) {
+            let version_changed = ext.version != right_ext.version;
+            let schema_changed = ext.schema_name != right_ext.schema_name;
+
+            let mut mods = Vec::new();
+            if version_changed {
+                mods.push(format!(
+                    "version: {} -> {}",
+                    right_ext.version, ext.version
+                ));
+            }
+            if schema_changed {
+                mods.push(format!(
+                    "schema: {} -> {}",
+                    right_ext.schema_name, ext.schema_name
+                ));
+            }
+            if !mods.is_empty() {
+                let action = match (version_changed, schema_changed) {
+                    (true, true) => format!(
+                        "alter extension {} update to '{}' + set schema {}",
+                        ext.name, ext.version, ext.schema_name
+                    ),
+                    (true, false) => format!(
+                        "alter extension {} update to '{}'",
+                        ext.name, ext.version
+                    ),
+                    _ => format!(
+                        "alter extension {} set schema {}",
+                        ext.name, ext.schema_name
+                    ),
+                };
+                result.push(ObjectAnalysis {
+                    name: ext.name.clone(),
+                    action_description: action,
+                    modification_detail: Some(mods.join("\n")),
+                });
+            }
+        } else {
+            result.push(ObjectAnalysis {
+                name: ext.name.clone(),
+                action_description: format!("create extension {}", ext.name),
+                modification_detail: Some(format!(
+                    "schema: {}\nversion: {}",
+                    ext.schema_name, ext.version
+                )),
+            });
+        }
+    }
+
+    // Check for extensions to drop (in right but not in left)
+    for ext in right {
+        if !left_map.contains_key(ext.name.as_str()) {
+            result.push(ObjectAnalysis {
+                name: ext.name.clone(),
+                action_description: format!("drop extension {}", ext.name),
+                modification_detail: Some(format!(
+                    "schema: {}\nversion: {}",
+                    ext.schema_name, ext.version
+                )),
+            });
+        }
+    }
+
+    result
 }
 
 fn analyze_schemas(left: &HashSet<&str>, right: &HashSet<&str>) -> Vec<ObjectAnalysis> {
@@ -1282,6 +1383,9 @@ fn generate_xml(
 
     // Schemas section
     write_object_section(&mut xml, "schemas", "schema", &analysis.schemas);
+
+    // Extensions section
+    write_object_section(&mut xml, "extensions", "extension", &analysis.extensions);
 
     // Types section
     write_object_section(&mut xml, "types", "type", &analysis.types);

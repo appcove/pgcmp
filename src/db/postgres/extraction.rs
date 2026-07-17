@@ -1,5 +1,6 @@
 use super::DbConnection;
 use super::constraints::extract_constraints;
+use super::extensions::extract_extensions;
 use super::functions::extract_functions;
 use super::indexes::extract_indexes;
 use super::sequences::extract_sequences;
@@ -22,7 +23,8 @@ impl<'a> SchemaExtractor<'a> {
         let client = self.conn.client();
         let mut objects = Vec::new();
 
-        // Extract all object types (types first since other objects may depend on them)
+        // Extensions first (other objects may depend on them), then types, then the rest
+        objects.extend(extract_extensions(client).await?);
         objects.extend(extract_types(client).await?);
         objects.extend(extract_tables(client).await?);
         objects.extend(extract_views(client).await?);

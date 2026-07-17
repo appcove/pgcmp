@@ -22,6 +22,11 @@ pub async fn fetch_functions(client: &Client) -> anyhow::Result<Vec<FunctionInfo
             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
               AND p.prokind IN ('f', 'p')  -- functions and procedures
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend d
+                  WHERE d.classid = 'pg_proc'::regclass
+                    AND d.objid = p.oid AND d.deptype = 'e'
+              )
             ORDER BY n.nspname, p.proname
             "#,
             &[],

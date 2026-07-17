@@ -22,6 +22,11 @@ pub async fn fetch_views(client: &Client) -> anyhow::Result<Vec<ViewInfo>> {
             WHERE c.relkind = 'v'
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend d
+                  WHERE d.classid = 'pg_class'::regclass
+                    AND d.objid = c.oid AND d.deptype = 'e'
+              )
             ORDER BY n.nspname, c.relname
             "#,
             &[],
@@ -55,6 +60,11 @@ pub async fn fetch_materialized_views(client: &Client) -> anyhow::Result<Vec<Vie
             WHERE c.relkind = 'm'
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend d
+                  WHERE d.classid = 'pg_class'::regclass
+                    AND d.objid = c.oid AND d.deptype = 'e'
+              )
             ORDER BY n.nspname, c.relname
             "#,
             &[],
