@@ -97,6 +97,8 @@ This makes the file safe by construction: running it in `psql` by accident appli
 
 Schemas, extensions (name, version, install schema), types (enums, composites, domains, ranges), tables, columns (type, nullability, defaults), views, materialized views, functions, indexes, constraints, triggers, and sequences. Objects owned by extensions are not listed separately — install or drop the extension instead.
 
+Schemas whose names start with the literal prefix `x_` are ignored when extracting and comparing schemas and collecting migration test row counts.
+
 For each difference, the report states the action needed to converge the old schema on the new one (`create table app.orders`, `alter column app.users.email`, `drop index app.stale_idx`, ...) with old/new details for modifications. `pgcmp test` additionally reports per-table row count changes so data migrations are verifiable too.
 
 ## Project layout

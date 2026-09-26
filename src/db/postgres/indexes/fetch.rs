@@ -23,6 +23,7 @@ pub async fn fetch_indexes(client: &Client) -> anyhow::Result<Vec<IndexInfo>> {
             WHERE c.relkind = 'i'
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND left(n.nspname, 2) <> 'x_'
               AND NOT i.indisprimary  -- exclude primary key indexes (handled with constraints)
               AND NOT EXISTS (
                   SELECT 1 FROM pg_depend d

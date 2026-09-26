@@ -123,6 +123,7 @@ async fn capture_row_counts(conn: &DbConnection) -> anyhow::Result<HashMap<Strin
             WHERE c.relkind = 'r'
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND left(n.nspname, 2) <> 'x_'
             ORDER BY n.nspname, c.relname
             "#,
             &[],

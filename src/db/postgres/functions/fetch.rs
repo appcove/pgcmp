@@ -21,6 +21,7 @@ pub async fn fetch_functions(client: &Client) -> anyhow::Result<Vec<FunctionInfo
             JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND left(n.nspname, 2) <> 'x_'
               AND p.prokind IN ('f', 'p')  -- functions and procedures
               AND NOT EXISTS (
                   SELECT 1 FROM pg_depend d

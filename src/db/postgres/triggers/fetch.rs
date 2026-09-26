@@ -25,6 +25,7 @@ pub async fn fetch_triggers(client: &Client) -> anyhow::Result<Vec<TriggerInfo>>
             WHERE NOT t.tgisinternal
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND left(n.nspname, 2) <> 'x_'
               AND NOT EXISTS (
                   SELECT 1 FROM pg_depend d
                   WHERE d.classid = 'pg_trigger'::regclass

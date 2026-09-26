@@ -24,6 +24,7 @@ pub async fn fetch_extensions(client: &Client) -> anyhow::Result<Vec<ExtensionIn
             JOIN pg_namespace n ON n.oid = e.extnamespace
             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND left(n.nspname, 2) <> 'x_'
             ORDER BY e.extname
             "#,
             &[],

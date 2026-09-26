@@ -32,6 +32,7 @@ pub async fn fetch_tables(client: &Client) -> anyhow::Result<Vec<TableInfo>> {
             WHERE c.relkind = 'r'
               AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
               AND n.nspname NOT LIKE 'pg_temp_%'
+              AND left(n.nspname, 2) <> 'x_'
               AND NOT EXISTS (
                   SELECT 1 FROM pg_depend d
                   WHERE d.classid = 'pg_class'::regclass
