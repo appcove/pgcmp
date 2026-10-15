@@ -52,6 +52,12 @@ pgcmp is a PostgreSQL schema comparison CLI tool written in Rust. It compares "n
 
 `pull` writes one `.sql` file per PostgreSQL schema (`src/schema/writer.rs`). Within each file, objects are grouped into sections by type in dependency-friendly order: extensions, types, sequences, tables, indexes, constraints, views, materialized views, functions, triggers.
 
+### Ignored Schemas
+
+Schema names beginning with the literal, case-sensitive prefix `x_` are excluded from extraction (`init` and `pull`), comparison (`diff` and `test`), and migration test row counts in both databases. All object types in those schemas are excluded, including installed extensions. For example, `x_archive` is ignored while `xarchive` and `X_archive` remain included.
+
+The exclusion is applied in the catalog queries in `src/db/postgres/*/fetch.rs` and the row-count query in `src/commands/test.rs`, using `left(n.nspname, 2) <> 'x_'`. Keep it consistent when adding object fetch queries. Migration SQL still executes as written, including statements that target ignored schemas.
+
 ### User Project Structure (created by init)
 
 ```

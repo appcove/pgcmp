@@ -4097,6 +4097,10 @@ fn generate_claude_md(state: &State) -> String {
     content.push_str("Each database directory contains one `.sql` file per PostgreSQL schema (e.g., `public.sql`).\n");
     content.push_str("Each schema file contains all objects for that schema: tables, views, functions, indexes, etc.\n\n");
 
+    content.push_str("Schemas starting with the literal, case-sensitive prefix `x_` (for example, `x_archive`) are automatically ignored in both databases.\n");
+    content.push_str("All objects in those schemas, including installed extensions, are excluded from schema snapshots, `pgcmp diff` / `pgcmp test` comparisons, and migration test row counts.\n");
+    content.push_str("Names such as `xarchive` and `X_archive` remain included. Migration SQL still executes as written, including statements that target ignored schemas.\n\n");
+
     content.push_str("**IMPORTANT: You MUST NEVER read files other than those listed above.**\n");
     content.push_str("Do not read CONFIG.toml, CLAUDE.md, or any other files. Only read:\n");
     content.push_str("- `INSTRUCT.md` (for extra project-specific instructions)\n");

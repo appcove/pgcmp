@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extension support: compare installed extensions (name, version, install schema) in `pull`, `diff`, and `test`.
 - Extension-owned objects are excluded from individual object lists so diffs report `create/drop/alter extension` instead of member noise.
 
+### Changed
+
+- Schemas starting with the literal, case-sensitive prefix `x_` are automatically excluded from schema extraction, comparisons, and migration test row counts in both databases.
+
 ## [0.1.0] - 2026-07-02
 
 Initial release.

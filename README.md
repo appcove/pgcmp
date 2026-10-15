@@ -29,7 +29,7 @@ The `diff` and `test` commands emit structured XML on stdout, designed to be pas
 ```
 
 1. **`pgcmp init`** — interactive TUI to configure both database connections (writes `CONFIG.toml`).
-2. **`pgcmp pull`** — snapshot both schemas to `new.database/` and `old.database/` as one SQL file per object. These directories are git-diffable and greppable — ideal context for an agent.
+2. **`pgcmp pull`** — snapshot both schemas to `new.database/` and `old.database/` as one SQL file per included PostgreSQL schema. These directories are git-diffable and greppable — ideal context for an agent.
 3. **Write `MIGRATION.sql`** — by hand, or by an AI agent working from the pulled schema files and diff output.
 4. **`pgcmp test`** — applies the migration to the old database *inside a transaction*, compares the result against the new database, reports every remaining difference plus row-count changes as XML, then rolls back.
 5. Iterate until `test` reports `<number_of_differences>0</number_of_differences>`.
@@ -67,7 +67,7 @@ pgcmp apply --commit   # apply for real once test shows zero differences
 | Command | What it does |
 |---------|--------------|
 | `pgcmp init` | Interactive TUI setup: configure both connections, verify they work, write `CONFIG.toml`. Supports `--non-interactive` with `--new-connection` / `--old-connection`. |
-| `pgcmp pull` | Extract both schemas to `new.database/` and `old.database/` directories (one file per object). `--new-only` / `--old-only` to limit. |
+| `pgcmp pull` | Extract both schemas to `new.database/` and `old.database/` directories (one file per included PostgreSQL schema). `--new-only` / `--old-only` to limit. |
 | `pgcmp diff` | Live comparison of the two databases. XML report on stdout. Exit code `2` if differences exist, `0` if schemas match. |
 | `pgcmp test` | Validate and apply `MIGRATION.sql` to the old database in a transaction, capture before/after row counts, diff the migrated schema against the new database, print the XML report, then **roll back**. `--migration-file` to use a different file. |
 | `pgcmp apply` | Apply `MIGRATION.sql` to the old database. **Rolls back by default**; pass `--commit` to actually persist. |
@@ -97,9 +97,19 @@ This makes the file safe by construction: running it in `psql` by accident appli
 
 Schemas, extensions (name, version, install schema), types (enums, composites, domains, ranges), tables, columns (type, nullability, defaults), views, materialized views, functions, indexes, constraints, triggers, and sequences. Objects owned by extensions are not listed separately — install or drop the extension instead.
 
-Schemas whose names start with the literal prefix `x_` are ignored when extracting and comparing schemas and collecting migration test row counts.
-
 For each difference, the report states the action needed to converge the old schema on the new one (`create table app.orders`, `alter column app.users.email`, `drop index app.stale_idx`, ...) with old/new details for modifications. `pgcmp test` additionally reports per-table row count changes so data migrations are verifiable too.
+
+### Ignored schemas
+
+Schemas whose names start with the literal, case-sensitive prefix `x_` are automatically ignored in both databases. This excludes all objects in those schemas, including installed extensions, from:
+
+- Schema snapshots extracted by `pgcmp init` and `pgcmp pull`.
+- Schema comparisons in `pgcmp diff` and `pgcmp test`.
+- Before/after table row counts in `pgcmp test`.
+
+For example, `x_` and `x_archive` are ignored; `xarchive`, `app_x_archive`, and `X_archive` remain included. No configuration is required.
+
+Migration SQL still executes as written, including statements that target ignored schemas.
 
 ## Project layout
 
