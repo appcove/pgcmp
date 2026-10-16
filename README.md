@@ -31,7 +31,7 @@ The `diff` and `test` commands emit structured XML on stdout, designed to be pas
 1. **`pgcmp init`** — interactive TUI to configure both database connections (writes `CONFIG.toml`).
 2. **`pgcmp pull`** — snapshot both schemas to `new.database/` and `old.database/` as one SQL file per included PostgreSQL schema. These directories are git-diffable and greppable — ideal context for an agent.
 3. **Write `MIGRATION.sql`** — by hand, or by an AI agent working from the pulled schema files and diff output.
-4. **`pgcmp test`** — applies the migration to the old database *inside a transaction*, compares the result against the new database, reports every remaining difference plus row-count changes as XML, then rolls back.
+4. **`pgcmp test`** — applies the migration to the old database *inside a transaction*, compares the result against the new database, reports every remaining difference as XML, then rolls back. Add `--row-counts` to also report per-table row-count changes (slow on large databases, so save it for the final check).
 5. Iterate until `test` reports `<number_of_differences>0</number_of_differences>`.
 6. **`pgcmp apply --commit`** — run the migration for real. Without `--commit`, apply also rolls back.
 
@@ -58,7 +58,8 @@ pgcmp diff      # show current differences (exit code 2 if any)
 
 # ... write MIGRATION.sql ...
 
-pgcmp test      # safe dry-run: apply in txn, diff, show row counts, rollback
+pgcmp test      # safe dry-run: apply in txn, diff, rollback
+pgcmp test --row-counts   # final check: also compare before/after row counts
 pgcmp apply --commit   # apply for real once test shows zero differences
 ```
 
@@ -69,7 +70,7 @@ pgcmp apply --commit   # apply for real once test shows zero differences
 | `pgcmp init` | Interactive TUI setup: configure both connections, verify they work, write `CONFIG.toml`. Supports `--non-interactive` with `--new-connection` / `--old-connection`. |
 | `pgcmp pull` | Extract both schemas to `new.database/` and `old.database/` directories (one file per included PostgreSQL schema). `--new-only` / `--old-only` to limit. |
 | `pgcmp diff` | Live comparison of the two databases. XML report on stdout. Exit code `2` if differences exist, `0` if schemas match. |
-| `pgcmp test` | Validate and apply `MIGRATION.sql` to the old database in a transaction, capture before/after row counts, diff the migrated schema against the new database, print the XML report, then **roll back**. `--migration-file` to use a different file. |
+| `pgcmp test` | Validate and apply `MIGRATION.sql` to the old database in a transaction, diff the migrated schema against the new database, print the XML report, then **roll back**. `--row-counts` also captures before/after row counts for every table (a `COUNT(*)` per table, so slow on large databases). `--migration-file` to use a different file. |
 | `pgcmp apply` | Apply `MIGRATION.sql` to the old database. **Rolls back by default**; pass `--commit` to actually persist. |
 
 Progress and status messages go to stderr; the XML report goes to stdout, so you can redirect or pipe the report cleanly.
@@ -97,7 +98,7 @@ This makes the file safe by construction: running it in `psql` by accident appli
 
 Schemas, extensions (name, version, install schema), types (enums, composites, domains, ranges), tables, columns (type, nullability, defaults), views, materialized views, functions, indexes, constraints, triggers, and sequences. Objects owned by extensions are not listed separately — install or drop the extension instead.
 
-For each difference, the report states the action needed to converge the old schema on the new one (`create table app.orders`, `alter column app.users.email`, `drop index app.stale_idx`, ...) with old/new details for modifications. `pgcmp test` additionally reports per-table row count changes so data migrations are verifiable too.
+For each difference, the report states the action needed to converge the old schema on the new one (`create table app.orders`, `alter column app.users.email`, `drop index app.stale_idx`, ...) with old/new details for modifications. `pgcmp test --row-counts` additionally reports per-table row count changes so data migrations are verifiable too.
 
 ### Ignored schemas
 
@@ -105,7 +106,7 @@ Schemas whose names start with the literal, case-sensitive prefix `x_` are autom
 
 - Schema snapshots extracted by `pgcmp init` and `pgcmp pull`.
 - Schema comparisons in `pgcmp diff` and `pgcmp test`.
-- Before/after table row counts in `pgcmp test`.
+- Before/after table row counts in `pgcmp test --row-counts`.
 
 For example, `x_` and `x_archive` are ignored; `xarchive`, `app_x_archive`, and `X_archive` remain included. No configuration is required.
 
@@ -162,9 +163,10 @@ Author a migration that converges the old database on the new schema.
    understand both schemas.
 2. Write `MIGRATION.sql` (BEGIN TRANSACTION; ... ROLLBACK;).
 3. Run `pgcmp test` and read the XML report.
-4. Repeat 2–3 until <number_of_differences> is 0 and the row count
-   changes look correct.
-5. Stop. A human runs `pgcmp apply --commit`.
+4. Repeat 2–3 until <number_of_differences> is 0.
+5. Run `pgcmp test --row-counts` and check that the row count changes
+   look correct.
+6. Stop. A human runs `pgcmp apply --commit`.
 ```
 
 The enforced `ROLLBACK` envelope means the agent can run `test` as many times as it needs without ever mutating the database.

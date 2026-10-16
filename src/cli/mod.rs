@@ -64,6 +64,11 @@ pub struct TestArgs {
     /// Migration file to test
     #[arg(long, default_value = "MIGRATION.sql")]
     pub migration_file: PathBuf,
+
+    /// Count rows in every table before and after the migration. Slow on large
+    /// databases, so use it for the final check once the schema matches
+    #[arg(long)]
+    pub row_counts: bool,
 }
 
 #[derive(Parser)]

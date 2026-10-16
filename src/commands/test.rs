@@ -43,8 +43,12 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
     let old_version = get_postgres_version(&old_conn).await?;
 
     // Capture row counts before migration (outside of transaction)
-    eprintln!("Capturing row counts (before)...");
-    let row_counts_before = capture_row_counts(&old_conn).await?;
+    let row_counts_before = if args.row_counts {
+        eprintln!("Capturing row counts (before)...");
+        Some(capture_row_counts(&old_conn).await?)
+    } else {
+        None
+    };
 
     // Apply migration - execute statements one at a time for detailed error reporting
     // This executes BEGIN and all statements except the final ROLLBACK
@@ -53,8 +57,14 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
     eprintln!("Migration applied successfully.");
 
     // Capture row counts after migration
-    eprintln!("Capturing row counts (after)...");
-    let row_counts_after = capture_row_counts(&old_conn).await?;
+    let row_counts_section = match &row_counts_before {
+        Some(before) => {
+            eprintln!("Capturing row counts (after)...");
+            let after = capture_row_counts(&old_conn).await?;
+            row_counts_xml(before, &after)
+        }
+        None => "  <row_counts skipped=\"true\">Run pgcmp test --row-counts to compare row counts before and after the migration.</row_counts>\n".to_string(),
+    };
 
     // Compare schemas: new database vs old database (with migration applied)
     eprintln!("Comparing schemas...");
@@ -67,7 +77,7 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
         &old_config.connection_string(),
         &new_version,
         &old_version,
-        &row_counts_xml(&row_counts_before, &row_counts_after),
+        &row_counts_section,
     );
 
     // Rollback transaction
@@ -85,6 +95,9 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
         );
     } else {
         eprintln!("\nMigration successful - schemas match after applying migration.");
+        if row_counts_before.is_none() {
+            eprintln!("Run `pgcmp test --row-counts` for a final check of row counts.");
+        }
     }
 
     Ok(())

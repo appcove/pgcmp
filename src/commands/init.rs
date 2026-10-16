@@ -4124,11 +4124,15 @@ fn generate_claude_md(state: &State) -> String {
         .push_str("2. **Analyze the XML output** to understand what SQL statements are needed\n");
     content.push_str("3. **Edit `MIGRATION.sql`** to add SQL statements that transform old schema to match new\n");
     content.push_str("4. **Run `pgcmp test` again** to verify your changes (runs in a transaction with rollback)\n");
-    content.push_str("5. **Repeat until `pgcmp test` shows zero differences** - then the migration is complete\n\n");
+    content.push_str("5. **Repeat until `pgcmp test` shows zero differences**\n");
+    content.push_str("6. **Run `pgcmp test --row-counts`** as the final check (see Row Counts below) - then the migration is complete\n\n");
 
     content.push_str("### Key Command\n\n");
     content.push_str("```bash\n");
-    content.push_str("pgcmp test    # Test MIGRATION.sql against old database (with rollback)\n");
+    content.push_str(
+        "pgcmp test                # Test MIGRATION.sql against old database (with rollback)\n",
+    );
+    content.push_str("pgcmp test --row-counts   # Final check: also compare row counts (slow)\n");
     content.push_str("```\n\n");
 
     content.push_str("### MIGRATION.sql Format\n\n");
@@ -4192,6 +4196,13 @@ fn generate_claude_md(state: &State) -> String {
     content.push_str("Always rely on `pgcmp test` output to identify what needs to change.\n\n");
 
     content.push_str("### Important: Row Counts\n\n");
+    content.push_str(
+        "Row counts are only captured with `pgcmp test --row-counts`, which counts every table and\n",
+    );
+    content.push_str(
+        "can take a long time on large databases. Use plain `pgcmp test` while iterating, then run\n",
+    );
+    content.push_str("`pgcmp test --row-counts` once the schema differences reach zero.\n\n");
     content.push_str(
         "In most cases, the total row count for each table must remain the same after migration.\n",
     );

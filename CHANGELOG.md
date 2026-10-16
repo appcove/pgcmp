@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `pgcmp test` no longer counts rows by default, since counting every table is slow on large databases. Pass `--row-counts` for the before/after row count report, e.g. as the final check once the schema matches.
 - Changed views, materialized views, and functions show a unified diff of the full definitions instead of a truncated prefix or "definition changed". Changed triggers show both full definitions.
 
 ## [0.2.0] - 2026-10-15
