@@ -221,20 +221,15 @@ fn extract_when_clause(def: &str) -> Option<&str> {
 pub fn compare_trigger_lists(old: &[TriggerInfo], new: &[TriggerInfo]) -> Vec<TriggerDiff> {
     let mut results = Vec::new();
 
-    let old_map: HashMap<(&str, &str), &TriggerInfo> = old
-        .iter()
-        .map(|t| ((t.schema_name.as_str(), t.trigger_name.as_str()), t))
-        .collect();
+    let old_map: HashMap<(&str, &str, &str), &TriggerInfo> =
+        old.iter().map(|t| (t.key(), t)).collect();
 
-    let new_map: HashMap<(&str, &str), &TriggerInfo> = new
-        .iter()
-        .map(|t| ((t.schema_name.as_str(), t.trigger_name.as_str()), t))
-        .collect();
+    let new_map: HashMap<(&str, &str, &str), &TriggerInfo> =
+        new.iter().map(|t| (t.key(), t)).collect();
 
     // Check for added triggers
     for trig in new {
-        let key = (trig.schema_name.as_str(), trig.trigger_name.as_str());
-        if !old_map.contains_key(&key) {
+        if !old_map.contains_key(&trig.key()) {
             let mut diff = TriggerDiff {
                 schema_name: trig.schema_name.clone(),
                 trigger_name: trig.trigger_name.clone(),
@@ -253,8 +248,7 @@ pub fn compare_trigger_lists(old: &[TriggerInfo], new: &[TriggerInfo]) -> Vec<Tr
 
     // Check for removed triggers
     for trig in old {
-        let key = (trig.schema_name.as_str(), trig.trigger_name.as_str());
-        if !new_map.contains_key(&key) {
+        if !new_map.contains_key(&trig.key()) {
             let mut diff = TriggerDiff {
                 schema_name: trig.schema_name.clone(),
                 trigger_name: trig.trigger_name.clone(),
@@ -270,11 +264,7 @@ pub fn compare_trigger_lists(old: &[TriggerInfo], new: &[TriggerInfo]) -> Vec<Tr
 
     // Check for modified triggers
     for new_trig in new {
-        let key = (
-            new_trig.schema_name.as_str(),
-            new_trig.trigger_name.as_str(),
-        );
-        if let Some(old_trig) = old_map.get(&key) {
+        if let Some(old_trig) = old_map.get(&new_trig.key()) {
             let diff = compare_triggers(old_trig, new_trig);
             if !diff.is_empty() {
                 results.push(diff);

@@ -9,6 +9,14 @@ pub struct TriggerInfo {
     pub definition: String,
 }
 
+impl TriggerInfo {
+    /// Identity for matching triggers across databases. Trigger names are only
+    /// unique per table, so the table is part of the key.
+    pub fn key(&self) -> (&str, &str, &str) {
+        (&self.schema_name, &self.table_name, &self.trigger_name)
+    }
+}
+
 /// Fetch all user triggers from the database
 pub async fn fetch_triggers(client: &Client) -> anyhow::Result<Vec<TriggerInfo>> {
     let rows = client

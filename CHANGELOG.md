@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Same-named triggers on different tables in one schema are no longer compared against each other; triggers are matched by schema, table, and name.
+- Overloaded functions are no longer compared against each other; functions are matched by their identity arguments and reported as `schema.name(args)`.
+- Views whose `IN (...)` lists on `varchar` columns deparse differently after being re-created from `pg_get_viewdef` output are no longer reported as changed.
+
+### Changed
+
+- Changed views, materialized views, and functions show a unified diff of the full definitions instead of a truncated prefix or "definition changed". Changed triggers show both full definitions.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added

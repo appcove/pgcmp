@@ -36,3 +36,4 @@ crossterm = "0.28"
 tui-input = "0.11"
 tui-textarea = { version = "0.7", features = ["crossterm"] }
 pg_query = "6"
+similar = "2"

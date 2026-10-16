@@ -37,7 +37,10 @@ pgcmp is a PostgreSQL schema comparison CLI tool written in Rust. It compares "n
   - `ObjectType` enum includes Extension, Type, Table, View, MaterializedView, Function, Index, Constraint, Trigger, Sequence
   - `SchemaObject` represents extracted DDL with schema/object names
 - **`src/config.rs`** - CONFIG.toml parsing with `DbConfig` (host, port, user, password, database, tls)
-- **`src/comparison/`** - Schema diffing logic
+- **`src/comparison/`** - Schema diffing logic shared by `diff` and `test`
+  - `analysis.rs` - Fetches both databases and compares each object type
+  - `normalize.rs` - Normalizes definitions so cosmetic deparse differences aren't reported
+  - `report.rs` - XML report generation
 - **`src/git/`** - Git operations via git2
 
 ### Key Patterns
