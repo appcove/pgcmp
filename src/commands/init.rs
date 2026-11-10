@@ -239,11 +239,11 @@ impl ClaudeButton {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum InstructButton {
-    Save,
+    Edit,
     Revert,
 }
 
-const INSTRUCT_BUTTONS: [InstructButton; 2] = [InstructButton::Save, InstructButton::Revert];
+const INSTRUCT_BUTTONS: [InstructButton; 2] = [InstructButton::Edit, InstructButton::Revert];
 
 impl InstructButton {
     fn next(self) -> Self {
@@ -463,7 +463,6 @@ enum Focus {
     DbField(Field),
     PullButton(PullButton),
     ClaudeButton(ClaudeButton),
-    InstructTextArea,
     InstructButton(InstructButton),
     MigrationButton(MigrationButton),
     GitButton(GitButton),
@@ -498,11 +497,11 @@ struct State {
     claude_dialog_open: bool,
     /// Scroll offset for claude content dialog
     claude_scroll: u16,
-    /// Instruct contents dialog open (view mode)
+    /// Instruct editor dialog open
     instruct_dialog_open: bool,
-    /// Scroll offset for instruct content dialog
-    instruct_scroll: u16,
-    /// Instruct textarea for inline editing
+    /// Esc was pressed once with unapplied edits; a second Esc discards them
+    instruct_discard_armed: bool,
+    /// Editor buffer for the Instruct dialog
     instruct_textarea: TextArea<'static>,
     /// Flag to indicate the app should exit
     should_exit: bool,
@@ -589,7 +588,7 @@ impl State {
             memfs.write(PathBuf::from("INSTRUCT.md"), DEFAULT_INSTRUCT_TEMPLATE);
         }
 
-        Self {
+        let mut state = Self {
             app,
             tab: Tab::Setup,
             focus: Focus::TabBar,
@@ -610,14 +609,17 @@ impl State {
             claude_dialog_open: false,
             claude_scroll: 0,
             instruct_dialog_open: false,
-            instruct_scroll: 0,
+            instruct_discard_armed: false,
             instruct_textarea: TextArea::default(),
             should_exit: false,
             has_git: false,
             git_clean: true,
             git_status_lines: Vec::new(),
             git_branch: String::new(),
-        }
+        };
+
+        state.reload_instruct_textarea();
+        state
     }
 
     fn refresh_git_status(&mut self) {
@@ -692,6 +694,50 @@ impl State {
         // Fall back to disk
         let path = self.app.path.join("CLAUDE.md");
         std::fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    /// Load INSTRUCT.md (staged or on disk) into the editor buffer, discarding
+    /// unapplied edits.
+    fn reload_instruct_textarea(&mut self) {
+        let content = self.instruct_content();
+        self.instruct_textarea = TextArea::from(content.lines());
+    }
+
+    /// Open the Instruct editor dialog on the current INSTRUCT.md.
+    fn open_instruct_editor(&mut self) {
+        self.reload_instruct_textarea();
+        self.instruct_discard_armed = false;
+        self.instruct_dialog_open = true;
+    }
+
+    /// Whether the editor buffer differs from the current INSTRUCT.md.
+    fn instruct_editor_modified(&self) -> bool {
+        let current = self.instruct_content();
+        // An empty file has no lines, while an empty editor holds one blank line
+        let both_empty = current.is_empty() && self.instruct_textarea.is_empty();
+        let same_lines = self.instruct_textarea.lines().iter().eq(current.lines());
+        !(both_empty || same_lines)
+    }
+
+    /// Stage the editor buffer as INSTRUCT.md and close the dialog.
+    fn apply_instruct_editor(&mut self) {
+        let mut content = self.instruct_textarea.lines().join("\n");
+        if !content.is_empty() {
+            content.push('\n');
+        }
+        self.memfs.write(PathBuf::from("INSTRUCT.md"), content);
+        self.instruct_dialog_open = false;
+    }
+
+    /// Drop staged INSTRUCT.md edits, going back to the file on disk (or the
+    /// default template when there is none yet).
+    fn revert_instruct(&mut self) {
+        let path = PathBuf::from("INSTRUCT.md");
+        if self.app.path.join(&path).exists() {
+            self.memfs.remove(&path);
+        } else {
+            self.memfs.write(path, DEFAULT_INSTRUCT_TEMPLATE);
+        }
     }
 
     fn instruct_in_memfs(&self) -> bool {
@@ -1073,96 +1119,35 @@ fn handle_claude_dialog_event(evt: &Event, state: &mut State) {
 }
 
 fn handle_instruct_dialog_event(evt: &Event, state: &mut State) {
-    let content = state.instruct_content();
-    let line_count = content.lines().count() as u16;
+    if let Event::Key(key) = evt {
+        if key.kind != KeyEventKind::Press {
+            return;
+        }
+        use crossterm::event::KeyModifiers;
 
-    match evt {
-        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+        if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            state.apply_instruct_editor();
+            return;
+        }
+
+        if key.code == KeyCode::Esc {
+            // Unapplied edits take a second Esc to throw away
+            if state.instruct_editor_modified() && !state.instruct_discard_armed {
+                state.instruct_discard_armed = true;
+            } else {
                 state.instruct_dialog_open = false;
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if state.instruct_scroll < line_count.saturating_sub(1) {
-                    state.instruct_scroll += 1;
-                }
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                state.instruct_scroll = state.instruct_scroll.saturating_sub(1);
-            }
-            KeyCode::PageDown => {
-                state.instruct_scroll =
-                    (state.instruct_scroll + 20).min(line_count.saturating_sub(1));
-            }
-            KeyCode::PageUp => {
-                state.instruct_scroll = state.instruct_scroll.saturating_sub(20);
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                state.instruct_scroll = 0;
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                state.instruct_scroll = line_count.saturating_sub(1);
-            }
-            _ => {}
-        },
-        Event::Mouse(m) => {
-            match m.kind {
-                MouseEventKind::Down(event::MouseButton::Left) => {
-                    // Close on click outside could be added here
-                }
-                MouseEventKind::ScrollDown => {
-                    if state.instruct_scroll < line_count.saturating_sub(1) {
-                        state.instruct_scroll += 3;
-                    }
-                }
-                MouseEventKind::ScrollUp => {
-                    state.instruct_scroll = state.instruct_scroll.saturating_sub(3);
-                }
-                _ => {}
-            }
+            return;
         }
-        _ => {}
+
+        state.instruct_discard_armed = false;
     }
+
+    // Everything else (typing, cursor movement, mouse scroll) goes to the editor
+    state.instruct_textarea.input(evt.clone());
 }
 
 fn handle_event(evt: &Event, state: &mut State) -> anyhow::Result<bool> {
-    // Special handling for textarea when focused
-    if matches!(state.focus, Focus::InstructTextArea) {
-        if let Event::Key(key) = evt {
-            if key.kind == KeyEventKind::Press {
-                use crossterm::event::KeyModifiers;
-                // Handle Ctrl+S to save
-                if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    let content = state.instruct_textarea.lines().join("\n");
-                    state.memfs.write(PathBuf::from("INSTRUCT.md"), &content);
-                    return Ok(false);
-                }
-                // Handle Tab, BackTab, Esc for navigation
-                match key.code {
-                    KeyCode::Tab => {
-                        state.focus = Focus::InstructButton(InstructButton::Save);
-                        return Ok(false);
-                    }
-                    KeyCode::BackTab => {
-                        state.focus = Focus::TabBar;
-                        return Ok(false);
-                    }
-                    KeyCode::Esc => {
-                        if state.has_unsaved_changes() {
-                            state.dialog = Some(DialogButton::SaveAndClose);
-                        } else {
-                            return Ok(true);
-                        }
-                        return Ok(false);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        // Pass event to textarea
-        state.instruct_textarea.input(evt.clone());
-        return Ok(false);
-    }
-
     match evt {
         Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
             KeyCode::Esc => {
@@ -1335,67 +1320,39 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
             },
             _ => {}
         },
-        Focus::InstructTextArea => {
-            match code {
-                KeyCode::Tab => {
-                    state.focus = Focus::InstructButton(InstructButton::Save);
-                }
-                KeyCode::BackTab => {
-                    state.focus = Focus::TabBar;
-                }
-                KeyCode::Esc => {
-                    state.focus = Focus::TabBar;
-                }
-                _ => {
-                    // Pass key events to textarea
-                    // Note: we handle this specially in handle_event
-                }
-            }
-        }
-        Focus::InstructButton(btn) => {
-            match code {
-                KeyCode::Tab => {
-                    if btn == InstructButton::Revert {
-                        state.focus = Focus::BottomButton(BottomButton::Save);
-                    } else {
-                        state.focus = Focus::InstructButton(btn.next());
-                    }
-                }
-                KeyCode::BackTab => {
-                    if btn == InstructButton::Save {
-                        state.focus = Focus::InstructTextArea;
-                    } else {
-                        state.focus = Focus::InstructButton(btn.prev());
-                    }
-                }
-                KeyCode::Down => {
+        Focus::InstructButton(btn) => match code {
+            KeyCode::Tab => {
+                if btn == InstructButton::Revert {
                     state.focus = Focus::BottomButton(BottomButton::Save);
-                }
-                KeyCode::Up => {
-                    state.focus = Focus::InstructTextArea;
-                }
-                KeyCode::Left => {
-                    state.focus = Focus::InstructButton(btn.prev());
-                }
-                KeyCode::Right => {
+                } else {
                     state.focus = Focus::InstructButton(btn.next());
                 }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    match btn {
-                        InstructButton::Save => {
-                            let content = state.instruct_textarea.lines().join("\n");
-                            state.memfs.write(PathBuf::from("INSTRUCT.md"), &content);
-                        }
-                        InstructButton::Revert => {
-                            // Reload content from disk/memfs into textarea
-                            let content = state.instruct_content();
-                            state.instruct_textarea = TextArea::from(content.lines());
-                        }
-                    }
-                }
-                _ => {}
             }
-        }
+            KeyCode::BackTab => {
+                if btn == InstructButton::Edit {
+                    state.focus = Focus::TabBar;
+                } else {
+                    state.focus = Focus::InstructButton(btn.prev());
+                }
+            }
+            KeyCode::Down => {
+                state.focus = Focus::BottomButton(BottomButton::Save);
+            }
+            KeyCode::Up => {
+                state.focus = Focus::TabBar;
+            }
+            KeyCode::Left => {
+                state.focus = Focus::InstructButton(btn.prev());
+            }
+            KeyCode::Right => {
+                state.focus = Focus::InstructButton(btn.next());
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => match btn {
+                InstructButton::Edit => state.open_instruct_editor(),
+                InstructButton::Revert => state.revert_instruct(),
+            },
+            _ => {}
+        },
         Focus::MigrationButton(btn) => {
             match code {
                 KeyCode::Tab => {
@@ -1567,7 +1524,7 @@ fn default_focus_for_tab(tab: Tab) -> Focus {
         Tab::NewDb | Tab::OldDb => Focus::DbField(Field::Host),
         Tab::Pull => Focus::PullButton(PullButton::Pull),
         Tab::Claude => Focus::ClaudeButton(ClaudeButton::ViewContents),
-        Tab::Instruct => Focus::InstructTextArea,
+        Tab::Instruct => Focus::InstructButton(InstructButton::Edit),
         Tab::Migration => Focus::MigrationButton(MigrationButton::ViewContents),
         Tab::Setup => Focus::SetupDbType,
     }
@@ -1633,15 +1590,8 @@ fn handle_mouse_click(col: u16, row: u16, state: &mut State) -> anyhow::Result<(
             ClickTarget::InstructButton(btn) => {
                 state.focus = Focus::InstructButton(btn);
                 match btn {
-                    InstructButton::Save => {
-                        let content = state.instruct_textarea.lines().join("\n");
-                        state.memfs.write(PathBuf::from("INSTRUCT.md"), &content);
-                    }
-                    InstructButton::Revert => {
-                        // Reload content from disk/memfs into textarea
-                        let content = state.instruct_content();
-                        state.instruct_textarea = TextArea::from(content.lines());
-                    }
+                    InstructButton::Edit => state.open_instruct_editor(),
+                    InstructButton::Revert => state.revert_instruct(),
                 }
             }
             ClickTarget::MigrationButton(btn) => {
@@ -2784,99 +2734,103 @@ fn draw_instruct_tab(f: &mut Frame, area: Rect, state: &mut State) {
         inner.height,
     );
 
-    // Check if textarea content differs from saved content
-    let textarea_content = state.instruct_textarea.lines().join("\n");
-    let saved_content = state.instruct_content();
-    let has_unsaved = textarea_content != saved_content;
+    let content = state.instruct_content();
+    let staged = state.instruct_in_memfs();
 
     // Status message
     if padding.height > 0 {
-        let status_msg = Span::styled("This is extra instructions for Claude", Style::new().cyan());
+        let mut status = vec![Span::styled(
+            "INSTRUCT.md - extra instructions for Claude",
+            Style::new().cyan(),
+        )];
+        if staged {
+            status.push(Span::styled(
+                "  (staged - written on Save)",
+                Style::new().yellow(),
+            ));
+        }
         f.render_widget(
-            Paragraph::new(Line::from(status_msg)),
+            Paragraph::new(Line::from(status)),
             Rect::new(padding.x, padding.y, padding.width, 1),
         );
     }
 
-    // Layout: status (1) + gap (1) + textarea (remaining - 2 for buttons) + gap (1) + buttons (1)
-    let textarea_start = 2u16;
+    // Layout: status (1) + gap (1) + preview (remaining) + gap (1) + buttons (1)
+    let preview_start = 2u16;
     let button_height = 1u16;
     let gap = 1u16;
-    let textarea_height = padding
+    let preview_height = padding
         .height
-        .saturating_sub(textarea_start + button_height + gap);
+        .saturating_sub(preview_start + button_height + gap);
 
-    if textarea_height > 2 {
-        let textarea_area = Rect::new(
+    // Read-only preview: as many lines as fit, the rest summarized
+    if preview_height > 0 {
+        let preview_area = Rect::new(
             padding.x,
-            padding.y + textarea_start,
-            padding.width.min(100),
-            textarea_height,
+            padding.y + preview_start,
+            padding.width,
+            preview_height,
         );
-
-        // Configure textarea appearance
-        let is_focused = matches!(state.focus, Focus::InstructTextArea);
-        let border_style = if is_focused {
-            Style::new().cyan()
-        } else if has_unsaved {
-            Style::new().yellow()
+        let visible = usize::from(preview_height);
+        let line_count = content.lines().count();
+        let shown = if line_count > visible {
+            visible.saturating_sub(1)
         } else {
-            Style::new().dark_gray()
+            line_count
         };
 
-        let title = if has_unsaved {
-            " INSTRUCT.md (unsaved) - Ctrl+S to save "
+        let mut lines: Vec<Line> = content
+            .lines()
+            .take(shown)
+            .enumerate()
+            .map(|(i, line)| {
+                Line::from(vec![
+                    Span::styled(format!("{:4} ", i + 1), Style::new().dark_gray()),
+                    Span::raw(line),
+                ])
+            })
+            .collect();
+        if line_count > shown {
+            lines.push(Line::from(Span::styled(
+                format!("     ... and {} more lines", line_count - shown),
+                Style::new().dark_gray().italic(),
+            )));
+        }
+
+        let preview = if content.is_empty() {
+            Paragraph::new("(empty file)").style(Style::new().dark_gray().italic())
         } else {
-            " INSTRUCT.md "
+            Paragraph::new(lines).style(Style::new().white())
         };
-
-        state.instruct_textarea.set_block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(border_style),
-        );
-        state
-            .instruct_textarea
-            .set_cursor_line_style(Style::default());
-        state
-            .instruct_textarea
-            .set_line_number_style(Style::new().dark_gray());
-
-        f.render_widget(&state.instruct_textarea, textarea_area);
+        f.render_widget(preview, preview_area);
     }
 
-    // Save and Revert buttons
-    let btn_y = padding.y + textarea_start + textarea_height + gap;
+    // Edit and Revert buttons
+    let btn_y = padding.y + preview_start + preview_height + gap;
     if btn_y < padding.y + padding.height {
         let active_btn = match state.focus {
             Focus::InstructButton(b) => Some(b),
             _ => None,
         };
 
-        // Save button - green if there are unsaved changes
-        let save_style = if active_btn == Some(InstructButton::Save) {
-            if has_unsaved {
-                Style::new().green().bold().reversed()
-            } else {
-                Style::new().dark_gray().bold().reversed()
-            }
-        } else if has_unsaved {
-            Style::new().green()
+        let edit_style = if active_btn == Some(InstructButton::Edit) {
+            Style::new().green().bold().reversed()
         } else {
-            Style::new().dark_gray()
+            Style::new().green()
         };
-        let save_area = Rect::new(padding.x, btn_y, 10, 1);
-        f.render_widget(Paragraph::new("[ Save ]").style(save_style), save_area);
+        let edit_area = Rect::new(padding.x, btn_y, 10, 1);
+        f.render_widget(Paragraph::new("[ Edit ]").style(edit_style), edit_area);
         state
             .click_areas
-            .push((ClickTarget::InstructButton(InstructButton::Save), save_area));
+            .push((ClickTarget::InstructButton(InstructButton::Edit), edit_area));
 
-        // Revert button
+        // Revert only does something while edits are staged
         let revert_style = if active_btn == Some(InstructButton::Revert) {
             Style::new().bold().reversed()
-        } else {
+        } else if staged {
             Style::new().white()
+        } else {
+            Style::new().dark_gray()
         };
         let revert_area = Rect::new(padding.x + 12, btn_y, 12, 1);
         f.render_widget(
@@ -3159,52 +3113,43 @@ fn draw_claude_dialog(f: &mut Frame, area: Rect, state: &State) {
     f.render_widget(content_widget, inner);
 }
 
-fn draw_instruct_dialog(f: &mut Frame, area: Rect, state: &State) {
-    let content = state.instruct_content();
-    let line_count = content.lines().count();
-
+fn draw_instruct_dialog(f: &mut Frame, area: Rect, state: &mut State) {
     let dialog_width = area.width.saturating_sub(8).min(120);
     let dialog_height = area.height.saturating_sub(6).min(40);
     let dialog_area = center_rect(area, dialog_width, dialog_height);
 
     f.render_widget(Clear, dialog_area);
 
-    let visible_height = dialog_height.saturating_sub(4);
-    let max_scroll = (line_count as u16).saturating_sub(visible_height);
-    let scroll_info = if max_scroll > 0 {
-        format!(" (line {}/{}) ", state.instruct_scroll + 1, line_count)
+    let modified = state.instruct_editor_modified();
+    let title = if modified {
+        " Edit INSTRUCT.md (modified) "
     } else {
-        String::new()
+        " Edit INSTRUCT.md "
+    };
+    let (hint, border_style) = if state.instruct_discard_armed {
+        (
+            " Unapplied edits: Esc again to discard | Ctrl+S apply ",
+            Style::new().yellow(),
+        )
+    } else {
+        (" Ctrl+S apply | Esc cancel ", Style::new().cyan())
     };
 
-    let block = Block::default()
-        .title(format!(" INSTRUCT.md{} ", scroll_info))
-        .title_bottom(" Esc/Enter/q to close | ↑↓/jk scroll | PgUp/PgDn | Home/End ")
-        .borders(Borders::ALL)
-        .border_style(Style::new().cyan());
-    let inner = block.inner(dialog_area);
-    f.render_widget(block, dialog_area);
+    state.instruct_textarea.set_block(
+        Block::default()
+            .title(title)
+            .title_bottom(hint)
+            .borders(Borders::ALL)
+            .border_style(border_style),
+    );
+    state
+        .instruct_textarea
+        .set_cursor_line_style(Style::default());
+    state
+        .instruct_textarea
+        .set_line_number_style(Style::new().dark_gray());
 
-    let visible_lines: Vec<Line> = content
-        .lines()
-        .skip(state.instruct_scroll as usize)
-        .take(inner.height as usize)
-        .enumerate()
-        .map(|(i, line)| {
-            let line_num = state.instruct_scroll as usize + i + 1;
-            Line::from(vec![
-                Span::styled(format!("{:4} ", line_num), Style::new().dark_gray()),
-                Span::raw(line),
-            ])
-        })
-        .collect();
-
-    let content_widget = if visible_lines.is_empty() && content.is_empty() {
-        Paragraph::new("(empty file)").style(Style::new().dark_gray().italic())
-    } else {
-        Paragraph::new(visible_lines).style(Style::new().white())
-    };
-    f.render_widget(content_widget, inner);
+    f.render_widget(&state.instruct_textarea, dialog_area);
 }
 
 fn draw_pull_dialog(f: &mut Frame, area: Rect, state: &mut State) {

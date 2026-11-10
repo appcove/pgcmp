@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `pull`, `diff`, `test`, and the `init` pull are much faster: each database is read over up to 8 connections, so object types are fetched in parallel, both databases are read at the same time, and table columns come from one query instead of one per table. `test` fetches the new database while the migration runs on the old one, and `--row-counts` takes the "before" counts in parallel.
+- The `pgcmp init` Instruct tab shows `INSTRUCT.md` read-only and edits it in a dialog opened with `[ Edit ]` (Ctrl+S applies, Esc cancels, with a second Esc required to discard edits). The tab no longer captures keyboard focus. `[ Revert ]` drops staged edits.
+
+### Fixed
+
+- The `pgcmp init` Instruct editor starts from the saved `INSTRUCT.md` instead of an empty buffer, so saving no longer overwrites existing instructions with nothing.
 
 ## [0.2.1] - 2026-10-16
 
