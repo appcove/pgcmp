@@ -20,7 +20,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Tabs},
 };
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -831,6 +831,15 @@ async fn main_loop(
 ) -> anyhow::Result<()> {
     let mut state = State::new(app);
 
+    // Commit whatever is uncommitted on entry, so init starts from a clean tree
+    if app.path.join(".git").is_dir() {
+        match git_commit_existing_changes(&app.path, "pgcmp: auto-commit changes on init") {
+            Ok(true) => state.pull_status = "Committed existing changes".into(),
+            Ok(false) => {}
+            Err(e) => state.pull_status = e,
+        }
+    }
+
     // Check git status
     state.refresh_git_status();
 
@@ -912,19 +921,14 @@ fn handle_dialog_event(evt: &Event, state: &mut State) -> anyhow::Result<bool> {
             }
             KeyCode::Enter | KeyCode::Char(' ') => match state.dialog.unwrap() {
                 DialogButton::SaveAndClose => {
-                    if !state.git_clean {
-                        state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
-                        state.dialog = None;
-                    } else {
-                        save_all(
-                            state.app,
-                            state.database_type,
-                            &mut state.new_db,
-                            &mut state.old_db,
-                            &state.memfs,
-                        )?;
-                        return Ok(true);
-                    }
+                    save_all(
+                        state.app,
+                        state.database_type,
+                        &mut state.new_db,
+                        &mut state.old_db,
+                        &state.memfs,
+                    )?;
+                    return Ok(true);
                 }
                 DialogButton::Discard => {
                     return Ok(true);
@@ -946,19 +950,14 @@ fn handle_dialog_event(evt: &Event, state: &mut State) -> anyhow::Result<bool> {
             if let Some(ClickTarget::DialogButton(btn)) = clicked {
                 match btn {
                     DialogButton::SaveAndClose => {
-                        if !state.git_clean {
-                            state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
-                            state.dialog = None;
-                        } else {
-                            save_all(
-                                state.app,
-                                state.database_type,
-                                &mut state.new_db,
-                                &mut state.old_db,
-                                &state.memfs,
-                            )?;
-                            return Ok(true);
-                        }
+                        save_all(
+                            state.app,
+                            state.database_type,
+                            &mut state.new_db,
+                            &mut state.old_db,
+                            &state.memfs,
+                        )?;
+                        return Ok(true);
                     }
                     DialogButton::Discard => {
                         return Ok(true);
@@ -1492,18 +1491,14 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
             }
             KeyCode::Enter | KeyCode::Char(' ') => match btn {
                 BottomButton::Save => {
-                    if !state.git_clean {
-                        state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
-                    } else {
-                        save_all(
-                            state.app,
-                            state.database_type,
-                            &mut state.new_db,
-                            &mut state.old_db,
-                            &state.memfs,
-                        )?;
-                        state.should_exit = true;
-                    }
+                    save_all(
+                        state.app,
+                        state.database_type,
+                        &mut state.new_db,
+                        &mut state.old_db,
+                        &state.memfs,
+                    )?;
+                    state.should_exit = true;
                 }
                 BottomButton::Cancel => {
                     if state.has_unsaved_changes() {
@@ -1633,18 +1628,14 @@ fn handle_mouse_click(col: u16, row: u16, state: &mut State) -> anyhow::Result<(
                 state.focus = Focus::BottomButton(btn);
                 match btn {
                     BottomButton::Save => {
-                        if !state.git_clean {
-                            state.pull_status = "Cannot save: git status is not clean. Commit or discard changes first.".to_string();
-                        } else {
-                            save_all(
-                                state.app,
-                                state.database_type,
-                                &mut state.new_db,
-                                &mut state.old_db,
-                                &state.memfs,
-                            )?;
-                            state.should_exit = true;
-                        }
+                        save_all(
+                            state.app,
+                            state.database_type,
+                            &mut state.new_db,
+                            &mut state.old_db,
+                            &state.memfs,
+                        )?;
+                        state.should_exit = true;
                     }
                     BottomButton::Cancel => {
                         if state.has_unsaved_changes() {
@@ -1812,64 +1803,70 @@ fn clear_database_structure(state: &mut State) {
     state.pull_status = "Database structure cleared".into();
 }
 
-fn git_init(state: &mut State) {
-    let result = std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(&state.app.path)
-        .output();
+/// Run `git` in the project directory, returning its trimmed stdout.
+/// A non-zero exit is an error carrying git's stderr.
+fn run_git(path: &Path, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .map_err(|e| format!("could not run git: {}", e))?;
 
-    match result {
-        Ok(output) if output.status.success() => {
-            state.pull_status = "Git repository initialized".into();
-            state.refresh_git_status();
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            state.pull_status = format!("Git init failed: {}", stderr.trim());
-        }
-        Err(e) => {
-            state.pull_status = format!("Git init error: {}", e);
-        }
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // git reports some failures (e.g. a rejected commit) on stdout
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        Err(format!("git {} failed: {}", args.join(" "), detail))
     }
 }
 
+/// Stage and commit everything in the project directory.
+/// Returns `false` when there was nothing to commit.
+fn git_commit_all_at(path: &Path, message: &str) -> Result<bool, String> {
+    run_git(path, &["add", "-A"])?;
+    if run_git(path, &["status", "--porcelain"])?.is_empty() {
+        return Ok(false);
+    }
+    run_git(path, &["commit", "-m", message])?;
+    Ok(true)
+}
+
+/// Commit changes already in the working tree, before pgcmp writes anything.
+/// Returns `false` when there was nothing to commit.
+///
+/// Skipped while CONFIG.toml exists but is not ignored (a project whose
+/// .gitignore has not been written yet), so its passwords are never committed.
+fn git_commit_existing_changes(path: &Path, message: &str) -> Result<bool, String> {
+    let config_exposed = path.join("CONFIG.toml").exists()
+        && run_git(path, &["check-ignore", "-q", "CONFIG.toml"]).is_err();
+    if config_exposed {
+        return Ok(false);
+    }
+    git_commit_all_at(path, message)
+}
+
+fn git_init(state: &mut State) {
+    state.pull_status = match run_git(&state.app.path, &["init"]) {
+        Ok(_) => "Git repository initialized".into(),
+        Err(e) => e,
+    };
+    state.refresh_git_status();
+}
+
 fn git_commit_all(state: &mut State) {
-    // First, stage all changes
-    let add_result = std::process::Command::new("git")
-        .args(["add", "-A"])
-        .current_dir(&state.app.path)
-        .output();
-
-    if let Err(e) = add_result {
-        state.pull_status = format!("Git add error: {}", e);
-        return;
-    }
-
-    // Commit with a default message
-    let commit_result = std::process::Command::new("git")
-        .args(["commit", "-m", "pgcmp: auto-commit changes"])
-        .current_dir(&state.app.path)
-        .output();
-
-    match commit_result {
-        Ok(output) if output.status.success() => {
-            state.pull_status = "Changes committed successfully".into();
-            state.refresh_git_status();
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.contains("nothing to commit") || stderr.contains("nothing to commit") {
-                state.pull_status = "Nothing to commit".into();
-            } else {
-                state.pull_status = format!("Git commit failed: {}", stderr.trim());
-            }
-            state.refresh_git_status();
-        }
-        Err(e) => {
-            state.pull_status = format!("Git commit error: {}", e);
-        }
-    }
+    state.pull_status = match git_commit_all_at(&state.app.path, "pgcmp: auto-commit changes") {
+        Ok(true) => "Changes committed successfully".into(),
+        Ok(false) => "Nothing to commit".into(),
+        Err(e) => e,
+    };
+    state.refresh_git_status();
 }
 
 async fn do_pull(
@@ -2009,6 +2006,14 @@ fn poll_pull_task(state: &mut State) {
     }
 }
 
+/// Write the config and all staged files, committing to git around the write
+/// so the user never has to tidy the repository by hand:
+///
+/// - no repository yet: one is created (`run_init` only gets this far in a
+///   directory that started empty)
+/// - uncommitted changes already present: committed first, so they stay
+///   separate from what this save writes (`main_loop` does the same on entry)
+/// - everything this save writes: committed afterwards
 fn save_all(
     app: &App,
     database_type: DatabaseType,
@@ -2016,6 +2021,14 @@ fn save_all(
     old_db: &mut DbForm,
     memfs: &MemFs,
 ) -> anyhow::Result<()> {
+    if !app.path.join(".git").is_dir() {
+        run_git(&app.path, &["init"]).map_err(anyhow::Error::msg)?;
+    } else {
+        // Changes made since init started (it commits on entry too)
+        git_commit_existing_changes(&app.path, "pgcmp: auto-commit changes before init save")
+            .map_err(anyhow::Error::msg)?;
+    }
+
     // Save config
     let new_config = new_db.to_config_partial();
     let old_config = old_db.to_config_partial();
@@ -2033,21 +2046,8 @@ fn save_all(
     // Commit MemFs
     memfs.commit()?;
 
-    // Auto-commit to git if git repo exists
-    let git_dir = app.path.join(".git");
-    if git_dir.exists() && git_dir.is_dir() {
-        // Stage all changes
-        let _ = std::process::Command::new("git")
-            .args(["add", "-A"])
-            .current_dir(&app.path)
-            .output();
-
-        // Commit with auto message
-        let _ = std::process::Command::new("git")
-            .args(["commit", "-m", "pgcmp: auto-commit on save"])
-            .current_dir(&app.path)
-            .output();
-    }
+    git_commit_all_at(&app.path, "pgcmp: auto-commit on save")
+        .map_err(|e| anyhow::anyhow!("Files were saved, but the git commit failed: {}", e))?;
 
     Ok(())
 }
@@ -3250,7 +3250,7 @@ fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
         // No git repository - show init button
         if y < padding.y + padding.height {
             f.render_widget(
-                Paragraph::new("No git repository found in this directory.")
+                Paragraph::new("No git repository found in this directory. Save creates one.")
                     .style(Style::new().yellow()),
                 Rect::new(padding.x, y, padding.width, 1),
             );
@@ -3292,7 +3292,10 @@ fn draw_setup_tab(f: &mut Frame, area: Rect, state: &mut State) {
                     Style::new().green(),
                 )
             } else {
-                ("Status: Dirty (uncommitted changes)", Style::new().yellow())
+                (
+                    "Status: Dirty (uncommitted changes are committed on Save)",
+                    Style::new().yellow(),
+                )
             };
             f.render_widget(
                 Paragraph::new(status_text).style(status_style),
