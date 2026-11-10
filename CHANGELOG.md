@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-16
+
 ### Fixed
 
 - Same-named triggers on different tables in one schema are no longer compared against each other; triggers are matched by schema, table, and name.
@@ -43,6 +45,7 @@ Initial release.
 - Migration file validation using PostgreSQL's own parser (libpg_query): enforced `BEGIN TRANSACTION; ... ROLLBACK;` envelope.
 - Comparison coverage: schemas, types (enums, composites, domains, ranges), tables, columns, views, materialized views, functions, indexes, constraints, triggers, and sequences.
 
-[Unreleased]: https://github.com/appcove/pgcmp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/appcove/pgcmp/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/appcove/pgcmp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/appcove/pgcmp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/appcove/pgcmp/releases/tag/v0.1.0
