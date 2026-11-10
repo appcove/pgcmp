@@ -1,10 +1,13 @@
 use crate::App;
 use crate::cli::TestArgs;
-use crate::comparison::{analyze_databases, generate_xml, get_postgres_version, xml_escape};
+use crate::comparison::{
+    SchemaSnapshot, compare_snapshots, generate_xml, get_postgres_version, xml_escape,
+};
 use crate::config::Config;
-use crate::db::postgres::DbConnection;
 use crate::db::postgres::migration::{execute_migration_for_test, load_and_validate_migration};
+use crate::db::postgres::{DbConnection, DbPool};
 use anyhow::Context;
+use futures_util::future::join_all;
 use std::collections::{BTreeSet, HashMap};
 
 pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
@@ -26,21 +29,42 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
 
     eprintln!("Testing migration: {}", migration_path.display());
 
-    // Connect to new database (for comparison baseline)
-    eprintln!("Connecting to new (target) database...");
-    let new_conn = DbConnection::connect(&new_config.connection_string())
-        .await
-        .context("Failed to connect to new database")?;
-
-    // Connect to old database (where we'll apply the migration)
-    eprintln!("Connecting to old (source) database...");
-    let old_conn = DbConnection::connect(&old_config.connection_string())
-        .await
-        .context("Failed to connect to old database")?;
+    // Connect to everything at once:
+    // - a pool on the new database (comparison baseline)
+    // - one connection on the old database, which carries the migration's
+    //   transaction: everything that must see the migrated state runs on it
+    // - with --row-counts, a pool on the old database for the "before" counts,
+    //   which are taken outside the transaction
+    eprintln!("Connecting to new (target) and old (source) databases...");
+    let old_connection_string = old_config.connection_string();
+    let (new_pool, old_txn, old_pool) = tokio::try_join!(
+        async {
+            DbPool::connect(&new_config.connection_string())
+                .await
+                .context("Failed to connect to new database")
+        },
+        async {
+            DbConnection::connect(&old_connection_string)
+                .await
+                .map(DbPool::single)
+                .context("Failed to connect to old database")
+        },
+        async {
+            if !args.row_counts {
+                return Ok(None);
+            }
+            DbPool::connect(&old_connection_string)
+                .await
+                .map(Some)
+                .context("Failed to connect to old database")
+        },
+    )?;
 
     // Get version info
-    let new_version = get_postgres_version(&new_conn).await?;
-    let old_version = get_postgres_version(&old_conn).await?;
+    let (new_version, old_version) = tokio::try_join!(
+        async { get_postgres_version(&*new_pool.get().await?).await },
+        async { get_postgres_version(&*old_txn.get().await?).await },
+    )?;
 
     let exclude_like: Vec<String> = args
         .row_counts_exclude
@@ -48,33 +72,46 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
         .map(|pattern| glob_to_like(pattern))
         .collect();
 
-    // Capture row counts before migration (outside of transaction)
-    let row_counts_before = if args.row_counts {
-        eprintln!("Capturing row counts (before)...");
-        Some(capture_row_counts(&old_conn, &exclude_like).await?)
-    } else {
-        None
-    };
+    // The new database is independent of the migration, so its schema is
+    // fetched while the old database is being counted and migrated.
+    let new_side = SchemaSnapshot::fetch(&new_pool);
 
-    // Apply migration - execute statements one at a time for detailed error reporting
-    // This executes BEGIN and all statements except the final ROLLBACK
-    eprintln!("Applying migration...");
-    execute_migration_for_test(&old_conn, &migration_sql).await?;
-    eprintln!("Migration applied successfully.");
+    let old_side = async {
+        // Capture row counts before migration (outside of transaction)
+        let row_counts_before = match &old_pool {
+            Some(pool) => {
+                eprintln!("Capturing row counts (before)...");
+                Some(capture_row_counts(pool, &exclude_like).await?)
+            }
+            None => None,
+        };
 
-    // Capture row counts after migration
-    let row_counts_section = match &row_counts_before {
-        Some(before) => {
-            eprintln!("Capturing row counts (after)...");
-            let after = capture_row_counts(&old_conn, &exclude_like).await?;
-            row_counts_xml(&args.row_counts_exclude, before, &after)
-        }
-        None => "  <row_counts skipped=\"true\">Run pgcmp test --row-counts to compare row counts before and after the migration.</row_counts>\n".to_string(),
+        // Apply migration - execute statements one at a time for detailed error reporting
+        // This executes BEGIN and all statements except the final ROLLBACK
+        eprintln!("Applying migration...");
+        execute_migration_for_test(&*old_txn.get().await?, &migration_sql).await?;
+        eprintln!("Migration applied successfully.");
+
+        // Capture row counts after migration
+        let row_counts_section = match &row_counts_before {
+            Some(before) => {
+                eprintln!("Capturing row counts (after)...");
+                let after = capture_row_counts(&old_txn, &exclude_like).await?;
+                row_counts_xml(&args.row_counts_exclude, before, &after)
+            }
+            None => "  <row_counts skipped=\"true\">Run pgcmp test --row-counts to compare row counts before and after the migration.</row_counts>\n".to_string(),
+        };
+
+        // Old database with the migration applied
+        eprintln!("Comparing schemas...");
+        let snapshot = SchemaSnapshot::fetch(&old_txn).await?;
+
+        anyhow::Ok((row_counts_section, snapshot))
     };
 
     // Compare schemas: new database vs old database (with migration applied)
-    eprintln!("Comparing schemas...");
-    let analysis = analyze_databases(&new_conn, &old_conn).await?;
+    let (new_snapshot, (row_counts_section, old_snapshot)) = tokio::try_join!(new_side, old_side)?;
+    let analysis = compare_snapshots(&new_snapshot, &old_snapshot);
 
     // Generate XML output
     let xml = generate_xml(
@@ -88,7 +125,12 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
 
     // Rollback transaction
     eprintln!("Rolling back transaction...");
-    old_conn.client().execute("ROLLBACK", &[]).await?;
+    old_txn
+        .get()
+        .await?
+        .client()
+        .execute("ROLLBACK", &[])
+        .await?;
 
     // Print XML output
     println!("{}", xml);
@@ -101,7 +143,7 @@ pub async fn run_test(app: &'static App, args: TestArgs) -> anyhow::Result<()> {
         );
     } else {
         eprintln!("\nMigration successful - schemas match after applying migration.");
-        if row_counts_before.is_none() {
+        if !args.row_counts {
             eprintln!("Run `pgcmp test --row-counts` for a final check of row counts.");
         }
     }
@@ -138,11 +180,14 @@ struct RowCountSnapshot {
 
 /// Count rows in every table, skipping schemas that match any of the
 /// `exclude_like` patterns (SQL `LIKE` syntax, see `glob_to_like`).
+///
+/// Tables are counted concurrently, one per pooled connection.
 async fn capture_row_counts(
-    conn: &DbConnection,
+    pool: &DbPool,
     exclude_like: &[String],
 ) -> anyhow::Result<RowCountSnapshot> {
-    let excluded_schemas = capture_excluded_schemas(conn, exclude_like).await?;
+    let conn = pool.get().await?;
+    let excluded_schemas = capture_excluded_schemas(&conn, exclude_like).await?;
 
     // Unlike fetch_tables, extension-owned tables are intentionally included:
     // row counts verify data changes, and migrations can legitimately write to
@@ -168,10 +213,11 @@ async fn capture_row_counts(
         )
         .await?;
 
-    let mut counts = HashMap::new();
+    // Return the connection before the counts start checking them out
+    drop(conn);
 
     // Get actual COUNT(*) for each table
-    for table_row in tables {
+    let results = join_all(tables.iter().map(|table_row| async move {
         let schema_name: String = table_row.get("schema_name");
         let table_name: String = table_row.get("table_name");
         let full_name = format!("{}.{}", schema_name, table_name);
@@ -183,14 +229,22 @@ async fn capture_row_counts(
             table_name.replace('"', "\"\"")
         );
 
-        match conn.client().query_one(&query, &[]).await {
-            Ok(row) => {
-                let count: i64 = row.get(0);
-                counts.insert(full_name, count);
-            }
+        let conn = pool.get().await?;
+        let count = match conn.client().query_one(&query, &[]).await {
+            Ok(row) => Some(row.get::<_, i64>(0)),
             Err(e) => {
                 eprintln!("Warning: Could not count rows in {}: {}", full_name, e);
+                None
             }
+        };
+        anyhow::Ok((full_name, count))
+    }))
+    .await;
+
+    let mut counts = HashMap::new();
+    for result in results {
+        if let (full_name, Some(count)) = result? {
+            counts.insert(full_name, count);
         }
     }
 

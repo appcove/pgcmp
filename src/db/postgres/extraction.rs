@@ -1,4 +1,4 @@
-use super::DbConnection;
+use super::DbPool;
 use super::constraints::extract_constraints;
 use super::extensions::extract_extensions;
 use super::functions::extract_functions;
@@ -11,30 +11,57 @@ use super::views::{extract_materialized_views, extract_views};
 use crate::schema::SchemaObject;
 
 pub struct SchemaExtractor<'a> {
-    conn: &'a DbConnection,
+    pool: &'a DbPool,
 }
 
 impl<'a> SchemaExtractor<'a> {
-    pub fn new(conn: &'a DbConnection) -> Self {
-        Self { conn }
+    pub fn new(pool: &'a DbPool) -> Self {
+        Self { pool }
     }
 
+    /// Extract every object type, each on its own pooled connection.
     pub async fn extract_all(&self) -> anyhow::Result<Vec<SchemaObject>> {
-        let client = self.conn.client();
-        let mut objects = Vec::new();
+        let pool = self.pool;
+
+        let (
+            extensions,
+            types,
+            tables,
+            views,
+            materialized_views,
+            functions,
+            indexes,
+            constraints,
+            triggers,
+            sequences,
+        ) = tokio::try_join!(
+            async { extract_extensions(pool.get().await?.client()).await },
+            async { extract_types(pool.get().await?.client()).await },
+            async { extract_tables(pool.get().await?.client()).await },
+            async { extract_views(pool.get().await?.client()).await },
+            async { extract_materialized_views(pool.get().await?.client()).await },
+            async { extract_functions(pool.get().await?.client()).await },
+            async { extract_indexes(pool.get().await?.client()).await },
+            async { extract_constraints(pool.get().await?.client()).await },
+            async { extract_triggers(pool.get().await?.client()).await },
+            async { extract_sequences(pool.get().await?.client()).await },
+        )?;
 
         // Extensions first (other objects may depend on them), then types, then the rest
-        objects.extend(extract_extensions(client).await?);
-        objects.extend(extract_types(client).await?);
-        objects.extend(extract_tables(client).await?);
-        objects.extend(extract_views(client).await?);
-        objects.extend(extract_materialized_views(client).await?);
-        objects.extend(extract_functions(client).await?);
-        objects.extend(extract_indexes(client).await?);
-        objects.extend(extract_constraints(client).await?);
-        objects.extend(extract_triggers(client).await?);
-        objects.extend(extract_sequences(client).await?);
-
-        Ok(objects)
+        Ok([
+            extensions,
+            types,
+            tables,
+            views,
+            materialized_views,
+            functions,
+            indexes,
+            constraints,
+            triggers,
+            sequences,
+        ]
+        .into_iter()
+        .flatten()
+        .collect())
     }
 }

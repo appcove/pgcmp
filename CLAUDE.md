@@ -30,15 +30,15 @@ pgcmp is a PostgreSQL schema comparison CLI tool written in Rust. It compares "n
 - **`src/commands/`** - Command implementations (init, pull, diff, test, apply)
 - **`src/migration.rs`** - Shared migration validation and execution (validates BEGIN/ROLLBACK structure)
 - **`src/db/`** - Database connectivity and schema extraction
-  - `connection.rs` - tokio-postgres connection wrapper with 2s timeout
-  - `extraction.rs` - Coordinates extraction of all object types
+  - `connection.rs` - tokio-postgres connection wrapper with 2s timeout, plus `DbPool` (up to `POOL_SIZE` connections per database, checked out per task)
+  - `extraction.rs` - Coordinates extraction of all object types, in parallel over a `DbPool`
   - Individual files for each object type (extensions, types, tables, views, functions, indexes, constraints, triggers, sequences)
 - **`src/schema/`** - Schema object types and file writing
   - `ObjectType` enum includes Extension, Type, Table, View, MaterializedView, Function, Index, Constraint, Trigger, Sequence
   - `SchemaObject` represents extracted DDL with schema/object names
 - **`src/config.rs`** - CONFIG.toml parsing with `DbConfig` (host, port, user, password, database, tls)
 - **`src/comparison/`** - Schema diffing logic shared by `diff` and `test`
-  - `analysis.rs` - Fetches both databases and compares each object type
+  - `analysis.rs` - Fetches a `SchemaSnapshot` per database (object types in parallel over a `DbPool`) and compares them
   - `normalize.rs` - Normalizes definitions so cosmetic deparse differences aren't reported
   - `report.rs` - XML report generation
 - **`src/git/`** - Git operations via git2
@@ -50,6 +50,8 @@ pgcmp is a PostgreSQL schema comparison CLI tool written in Rust. It compares "n
 - `init` command uses ratatui TUI with crossterm backend for interactive configuration
 - Connection strings use `sslmode` parameter based on `TlsMode` (disable/require)
 - Background connection testing uses `tokio::sync::oneshot` channels
+- Catalog reads fan out over a `DbPool`: PostgreSQL runs one query per connection at a time, so parallelism comes from several connections, and the two databases are always read concurrently
+- In `test`, everything that must see the migrated state (post-migration schema fetch, "after" row counts, the final `ROLLBACK`) runs on `DbPool::single` wrapping the one connection that holds the migration's transaction — other connections cannot see its uncommitted changes. Only the new database and the "before" row counts use a multi-connection pool
 
 ### Schema File Layout
 

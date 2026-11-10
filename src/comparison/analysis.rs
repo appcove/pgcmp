@@ -6,16 +6,16 @@ use super::normalize::{
     normalize_constraint_definition, normalize_function_def, normalize_trigger_def,
     normalize_view_definition,
 };
-use crate::db::postgres::DbConnection;
-use crate::db::postgres::constraints::fetch_constraints;
-use crate::db::postgres::extensions::fetch_extensions;
-use crate::db::postgres::functions::fetch_functions;
-use crate::db::postgres::indexes::fetch_indexes;
-use crate::db::postgres::sequences::fetch_sequences;
-use crate::db::postgres::tables::fetch_tables;
-use crate::db::postgres::triggers::fetch_triggers;
-use crate::db::postgres::types::fetch_types;
-use crate::db::postgres::views::{fetch_materialized_views, fetch_views};
+use crate::db::postgres::constraints::{ConstraintInfo, fetch_constraints};
+use crate::db::postgres::extensions::{ExtensionInfo, fetch_extensions};
+use crate::db::postgres::functions::{FunctionInfo, fetch_functions};
+use crate::db::postgres::indexes::{IndexInfo, fetch_indexes};
+use crate::db::postgres::sequences::{SequenceInfo, fetch_sequences};
+use crate::db::postgres::tables::{TableInfo, fetch_tables};
+use crate::db::postgres::triggers::{TriggerInfo, fetch_triggers};
+use crate::db::postgres::types::{TypeInfo, fetch_types};
+use crate::db::postgres::views::{ViewInfo, fetch_materialized_views, fetch_views};
+use crate::db::postgres::{DbConnection, DbPool};
 use std::collections::{HashMap, HashSet};
 
 pub async fn get_postgres_version(conn: &DbConnection) -> anyhow::Result<String> {
@@ -103,49 +103,100 @@ impl AnalysisResult {
 // Database Analysis
 // =============================================================================
 
+/// Every object type fetched from one database.
+pub struct SchemaSnapshot {
+    tables: Vec<TableInfo>,
+    views: Vec<ViewInfo>,
+    matviews: Vec<ViewInfo>,
+    functions: Vec<FunctionInfo>,
+    indexes: Vec<IndexInfo>,
+    constraints: Vec<ConstraintInfo>,
+    triggers: Vec<TriggerInfo>,
+    sequences: Vec<SequenceInfo>,
+    types: Vec<TypeInfo>,
+    extensions: Vec<ExtensionInfo>,
+}
+
+impl SchemaSnapshot {
+    /// Fetch all object types, each on its own pooled connection.
+    pub async fn fetch(pool: &DbPool) -> anyhow::Result<Self> {
+        let (
+            tables,
+            views,
+            matviews,
+            functions,
+            indexes,
+            constraints,
+            triggers,
+            sequences,
+            types,
+            extensions,
+        ) = tokio::try_join!(
+            async { fetch_tables(pool.get().await?.client()).await },
+            async { fetch_views(pool.get().await?.client()).await },
+            async { fetch_materialized_views(pool.get().await?.client()).await },
+            async { fetch_functions(pool.get().await?.client()).await },
+            async { fetch_indexes(pool.get().await?.client()).await },
+            async { fetch_constraints(pool.get().await?.client()).await },
+            async { fetch_triggers(pool.get().await?.client()).await },
+            async { fetch_sequences(pool.get().await?.client()).await },
+            async { fetch_types(pool.get().await?.client()).await },
+            async { fetch_extensions(pool.get().await?.client()).await },
+        )?;
+
+        Ok(Self {
+            tables,
+            views,
+            matviews,
+            functions,
+            indexes,
+            constraints,
+            triggers,
+            sequences,
+            types,
+            extensions,
+        })
+    }
+}
+
+/// Fetch both databases concurrently and compare them.
 pub async fn analyze_databases(
-    left_conn: &DbConnection,
-    right_conn: &DbConnection,
+    left_pool: &DbPool,
+    right_pool: &DbPool,
 ) -> anyhow::Result<AnalysisResult> {
-    let left_client = left_conn.client();
-    let right_client = right_conn.client();
-
-    // Fetch all object types from both databases in parallel
-    let (left_tables, right_tables) =
-        tokio::try_join!(fetch_tables(left_client), fetch_tables(right_client))?;
-
-    let (left_views, right_views) =
-        tokio::try_join!(fetch_views(left_client), fetch_views(right_client))?;
-
-    let (left_matviews, right_matviews) = tokio::try_join!(
-        fetch_materialized_views(left_client),
-        fetch_materialized_views(right_client)
+    let (left, right) = tokio::try_join!(
+        SchemaSnapshot::fetch(left_pool),
+        SchemaSnapshot::fetch(right_pool)
     )?;
+    Ok(compare_snapshots(&left, &right))
+}
 
-    let (left_functions, right_functions) =
-        tokio::try_join!(fetch_functions(left_client), fetch_functions(right_client))?;
-
-    let (left_indexes, right_indexes) =
-        tokio::try_join!(fetch_indexes(left_client), fetch_indexes(right_client))?;
-
-    let (left_constraints, right_constraints) = tokio::try_join!(
-        fetch_constraints(left_client),
-        fetch_constraints(right_client)
-    )?;
-
-    let (left_triggers, right_triggers) =
-        tokio::try_join!(fetch_triggers(left_client), fetch_triggers(right_client))?;
-
-    let (left_sequences, right_sequences) =
-        tokio::try_join!(fetch_sequences(left_client), fetch_sequences(right_client))?;
-
-    let (left_types, right_types) =
-        tokio::try_join!(fetch_types(left_client), fetch_types(right_client))?;
-
-    let (left_extensions, right_extensions) = tokio::try_join!(
-        fetch_extensions(left_client),
-        fetch_extensions(right_client)
-    )?;
+/// Compare two fetched snapshots: `left` is new (target), `right` is old.
+pub fn compare_snapshots(left: &SchemaSnapshot, right: &SchemaSnapshot) -> AnalysisResult {
+    let SchemaSnapshot {
+        tables: left_tables,
+        views: left_views,
+        matviews: left_matviews,
+        functions: left_functions,
+        indexes: left_indexes,
+        constraints: left_constraints,
+        triggers: left_triggers,
+        sequences: left_sequences,
+        types: left_types,
+        extensions: left_extensions,
+    } = left;
+    let SchemaSnapshot {
+        tables: right_tables,
+        views: right_views,
+        matviews: right_matviews,
+        functions: right_functions,
+        indexes: right_indexes,
+        constraints: right_constraints,
+        triggers: right_triggers,
+        sequences: right_sequences,
+        types: right_types,
+        extensions: right_extensions,
+    } = right;
 
     // Extract schemas from tables
     let left_schemas: HashSet<&str> = left_tables.iter().map(|t| t.schema_name.as_str()).collect();
@@ -222,34 +273,34 @@ pub async fn analyze_databases(
     let schemas = analyze_schemas(&left_schemas, &right_schemas);
 
     // Analyze extensions
-    let extensions = analyze_extensions(&left_extensions, &right_extensions);
+    let extensions = analyze_extensions(left_extensions, right_extensions);
 
     // Analyze types
-    let types = analyze_types(&left_types, &right_types);
+    let types = analyze_types(left_types, right_types);
 
     // Analyze tables
-    let (tables, columns) = analyze_tables(&left_tables, &right_tables);
+    let (tables, columns) = analyze_tables(left_tables, right_tables);
 
     // Analyze views
-    let views = analyze_views(&left_views, &right_views, false);
-    let materialized_views = analyze_views(&left_matviews, &right_matviews, true);
+    let views = analyze_views(left_views, right_views, false);
+    let materialized_views = analyze_views(left_matviews, right_matviews, true);
 
     // Analyze functions
-    let functions = analyze_functions(&left_functions, &right_functions);
+    let functions = analyze_functions(left_functions, right_functions);
 
     // Analyze indexes
-    let indexes = analyze_indexes(&left_indexes, &right_indexes);
+    let indexes = analyze_indexes(left_indexes, right_indexes);
 
     // Analyze constraints
-    let constraints = analyze_constraints(&left_constraints, &right_constraints);
+    let constraints = analyze_constraints(left_constraints, right_constraints);
 
     // Analyze triggers
-    let triggers = analyze_triggers(&left_triggers, &right_triggers);
+    let triggers = analyze_triggers(left_triggers, right_triggers);
 
     // Analyze sequences
-    let sequences = analyze_sequences(&left_sequences, &right_sequences);
+    let sequences = analyze_sequences(left_sequences, right_sequences);
 
-    Ok(AnalysisResult {
+    AnalysisResult {
         summary,
         schemas,
         extensions,
@@ -263,7 +314,7 @@ pub async fn analyze_databases(
         constraints,
         triggers,
         sequences,
-    })
+    }
 }
 
 fn analyze_extensions(

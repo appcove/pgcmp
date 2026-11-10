@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `pgcmp test --row-counts-exclude <PATTERN>` skips schemas matching a glob pattern (`*`, `?`) when counting rows. Repeatable; requires `--row-counts`. The report lists the schemas each pattern excluded under `<row_counts><excluded_schemas>`.
 
+### Changed
+
+- `pull`, `diff`, `test`, and the `init` pull are much faster: each database is read over up to 8 connections, so object types are fetched in parallel, both databases are read at the same time, and table columns come from one query instead of one per table. `test` fetches the new database while the migration runs on the old one, and `--row-counts` takes the "before" counts in parallel.
+
 ## [0.2.1] - 2026-10-16
 
 ### Fixed

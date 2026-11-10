@@ -2,7 +2,7 @@ use crate::App;
 use crate::cli::DiffArgs;
 use crate::comparison::{analyze_databases, generate_xml, get_postgres_version};
 use crate::config::Config;
-use crate::db::postgres::DbConnection;
+use crate::db::postgres::DbPool;
 use anyhow::Context;
 
 pub async fn run_diff(app: &'static App, _args: DiffArgs) -> anyhow::Result<()> {
@@ -20,23 +20,27 @@ pub async fn run_diff(app: &'static App, _args: DiffArgs) -> anyhow::Result<()> 
 
     // Connect to both databases
     // Left = new (source/what you want), Right = old (target/what you have)
-    eprintln!("Connecting to left (new) database...");
-    let left_conn = DbConnection::connect(&new_config.connection_string())
-        .await
-        .context("Failed to connect to new database")?;
+    eprintln!("Connecting to left (new) and right (old) databases...");
+    let (left_pool, right_pool) = tokio::try_join!(
+        async {
+            DbPool::connect(&new_config.connection_string())
+                .await
+                .context("Failed to connect to new database")
+        },
+        async {
+            DbPool::connect(&old_config.connection_string())
+                .await
+                .context("Failed to connect to old database")
+        },
+    )?;
 
-    eprintln!("Connecting to right (old) database...");
-    let right_conn = DbConnection::connect(&old_config.connection_string())
-        .await
-        .context("Failed to connect to old database")?;
-
-    // Get version info
-    let left_version = get_postgres_version(&left_conn).await?;
-    let right_version = get_postgres_version(&right_conn).await?;
-
-    // Fetch schema objects from both databases
+    // Version info and schema objects, from both databases at once
     eprintln!("Fetching schemas...");
-    let analysis = analyze_databases(&left_conn, &right_conn).await?;
+    let (left_version, right_version, analysis) = tokio::try_join!(
+        async { get_postgres_version(&*left_pool.get().await?).await },
+        async { get_postgres_version(&*right_pool.get().await?).await },
+        analyze_databases(&left_pool, &right_pool),
+    )?;
 
     // Generate XML output
     let xml = generate_xml(

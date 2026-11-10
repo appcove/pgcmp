@@ -1,7 +1,7 @@
 use crate::App;
 use crate::cli::InitArgs;
 use crate::config::{Config, DatabaseType, DbConfig, TlsMode};
-use crate::db::postgres::DbConnection;
+use crate::db::postgres::{DbConnection, DbPool, SchemaExtractor};
 use crate::memfs::MemFs;
 use crate::schema::{SchemaObject, generate_schema_file, group_by_schema};
 use crossterm::{
@@ -1928,433 +1928,62 @@ async fn do_pull(
     tx: mpsc::Sender<PullMessage>,
     cancel: CancellationToken,
 ) {
-    let mut data = PullData::default();
+    // Both databases are pulled concurrently
+    let pull = async {
+        tokio::try_join!(
+            pull_database("New DB", new_config, &tx),
+            pull_database("Old DB", old_config, &tx),
+        )
+    };
 
-    // Helper macro to check cancellation
-    macro_rules! check_cancel {
-        () => {
-            if cancel.is_cancelled() {
-                return;
-            }
-        };
-    }
+    let result = tokio::select! {
+        _ = cancel.cancelled() => return,
+        result = pull => result,
+    };
 
-    if let Some(config) = new_config {
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("Connecting to new DB...".into()))
-            .await;
+    let done = result.map(|(new_objects, old_objects)| PullData {
+        new_objects,
+        old_objects,
+    });
+    let _ = tx.send(PullMessage::Done(done)).await;
+}
 
-        let conn = match DbConnection::connect(&config.connection_string()).await {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "New DB connection failed: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        };
+/// Extract one database's schema objects, reporting progress as `label: ...`.
+/// A database without a config yields no objects.
+async fn pull_database(
+    label: &str,
+    config: Option<DbConfig>,
+    tx: &mpsc::Sender<PullMessage>,
+) -> Result<Vec<SchemaObject>, String> {
+    let Some(config) = config else {
+        return Ok(Vec::new());
+    };
 
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "New DB: extracting extensions...".into(),
-            ))
-            .await;
-        match crate::db::postgres::extensions::extract_extensions(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract extensions: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
+    let _ = tx
+        .send(PullMessage::Status(format!("{label}: connecting...")))
+        .await;
+    let pool = DbPool::connect(&config.connection_string())
+        .await
+        .map_err(|e| format!("{label} connection failed: {e}"))?;
 
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("New DB: extracting types...".into()))
-            .await;
-        match crate::db::postgres::types::extract_types(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract types: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
+    let _ = tx
+        .send(PullMessage::Status(format!(
+            "{label}: extracting schema..."
+        )))
+        .await;
+    let objects = SchemaExtractor::new(&pool)
+        .extract_all()
+        .await
+        .map_err(|e| format!("{label}: failed to extract schema: {e}"))?;
 
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("New DB: extracting tables...".into()))
-            .await;
-        match crate::db::postgres::tables::extract_tables(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract tables: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
+    let _ = tx
+        .send(PullMessage::Status(format!(
+            "{label}: extracted {} objects",
+            objects.len()
+        )))
+        .await;
 
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("New DB: extracting views...".into()))
-            .await;
-        match crate::db::postgres::views::extract_views(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract views: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "New DB: extracting materialized views...".into(),
-            ))
-            .await;
-        match crate::db::postgres::views::extract_materialized_views(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract materialized views: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "New DB: extracting functions...".into(),
-            ))
-            .await;
-        match crate::db::postgres::functions::extract_functions(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract functions: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("New DB: extracting indexes...".into()))
-            .await;
-        match crate::db::postgres::indexes::extract_indexes(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract indexes: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "New DB: extracting constraints...".into(),
-            ))
-            .await;
-        match crate::db::postgres::constraints::extract_constraints(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract constraints: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("New DB: extracting triggers...".into()))
-            .await;
-        match crate::db::postgres::triggers::extract_triggers(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract triggers: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "New DB: extracting sequences...".into(),
-            ))
-            .await;
-        match crate::db::postgres::sequences::extract_sequences(conn.client()).await {
-            Ok(objs) => data.new_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract sequences: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        let _ = tx
-            .send(PullMessage::Status(format!(
-                "New DB: extracted {} objects",
-                data.new_objects.len()
-            )))
-            .await;
-    }
-
-    if let Some(config) = old_config {
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("Connecting to old DB...".into()))
-            .await;
-
-        let conn = match DbConnection::connect(&config.connection_string()).await {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Old DB connection failed: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        };
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "Old DB: extracting extensions...".into(),
-            ))
-            .await;
-        match crate::db::postgres::extensions::extract_extensions(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract extensions: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("Old DB: extracting types...".into()))
-            .await;
-        match crate::db::postgres::types::extract_types(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract types: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("Old DB: extracting tables...".into()))
-            .await;
-        match crate::db::postgres::tables::extract_tables(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract tables: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("Old DB: extracting views...".into()))
-            .await;
-        match crate::db::postgres::views::extract_views(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract views: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "Old DB: extracting materialized views...".into(),
-            ))
-            .await;
-        match crate::db::postgres::views::extract_materialized_views(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract materialized views: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "Old DB: extracting functions...".into(),
-            ))
-            .await;
-        match crate::db::postgres::functions::extract_functions(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract functions: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("Old DB: extracting indexes...".into()))
-            .await;
-        match crate::db::postgres::indexes::extract_indexes(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract indexes: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "Old DB: extracting constraints...".into(),
-            ))
-            .await;
-        match crate::db::postgres::constraints::extract_constraints(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract constraints: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status("Old DB: extracting triggers...".into()))
-            .await;
-        match crate::db::postgres::triggers::extract_triggers(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract triggers: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        check_cancel!();
-        let _ = tx
-            .send(PullMessage::Status(
-                "Old DB: extracting sequences...".into(),
-            ))
-            .await;
-        match crate::db::postgres::sequences::extract_sequences(conn.client()).await {
-            Ok(objs) => data.old_objects.extend(objs),
-            Err(e) => {
-                let _ = tx
-                    .send(PullMessage::Done(Err(format!(
-                        "Failed to extract sequences: {}",
-                        e
-                    ))))
-                    .await;
-                return;
-            }
-        }
-
-        let _ = tx
-            .send(PullMessage::Status(format!(
-                "Old DB: extracted {} objects",
-                data.old_objects.len()
-            )))
-            .await;
-    }
-
-    check_cancel!();
-    let _ = tx.send(PullMessage::Done(Ok(data))).await;
+    Ok(objects)
 }
 
 fn poll_pull_task(state: &mut State) {

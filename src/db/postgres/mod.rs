@@ -12,5 +12,5 @@ pub mod triggers;
 pub mod types;
 pub mod views;
 
-pub use connection::DbConnection;
+pub use connection::{DbConnection, DbPool};
 pub use extraction::SchemaExtractor;

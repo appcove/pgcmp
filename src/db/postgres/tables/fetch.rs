@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use tokio_postgres::Client;
 
 /// Metadata for a single column
@@ -20,11 +21,13 @@ pub struct TableInfo {
 
 /// Fetch all user tables from the database
 pub async fn fetch_tables(client: &Client) -> anyhow::Result<Vec<TableInfo>> {
-    // Get all user tables (exclude system schemas)
-    let table_rows = client
-        .query(
+    // Tables (exclude system schemas) and the columns of every table, as two
+    // queries pipelined on the connection rather than one column query per table.
+    let (table_rows, column_rows) = tokio::try_join!(
+        client.query(
             r#"
             SELECT
+                c.oid AS table_oid,
                 n.nspname AS schema_name,
                 c.relname AS table_name
             FROM pg_class c
@@ -41,37 +44,11 @@ pub async fn fetch_tables(client: &Client) -> anyhow::Result<Vec<TableInfo>> {
             ORDER BY n.nspname, c.relname
             "#,
             &[],
-        )
-        .await?;
-
-    let mut tables = Vec::new();
-
-    for row in table_rows {
-        let schema_name: String = row.get("schema_name");
-        let table_name: String = row.get("table_name");
-
-        let columns = fetch_columns(client, &schema_name, &table_name).await?;
-
-        tables.push(TableInfo {
-            schema_name,
-            table_name,
-            columns,
-        });
-    }
-
-    Ok(tables)
-}
-
-/// Fetch column information for a specific table
-async fn fetch_columns(
-    client: &Client,
-    schema_name: &str,
-    table_name: &str,
-) -> anyhow::Result<Vec<ColumnInfo>> {
-    let rows = client
-        .query(
+        ),
+        client.query(
             r#"
             SELECT
+                a.attrelid AS table_oid,
                 a.attname AS column_name,
                 pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
                 NOT a.attnotnull AS is_nullable,
@@ -81,19 +58,22 @@ async fn fetch_columns(
             JOIN pg_class c ON c.oid = a.attrelid
             JOIN pg_namespace n ON n.oid = c.relnamespace
             LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-            WHERE n.nspname = $1
-              AND c.relname = $2
+            WHERE c.relkind = 'r'
+              AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+              AND n.nspname NOT LIKE 'pg_temp_%'
+              AND left(n.nspname, 2) <> 'x_'
               AND a.attnum > 0
               AND NOT a.attisdropped
-            ORDER BY a.attnum
+            ORDER BY a.attrelid, a.attnum
             "#,
-            &[&schema_name, &table_name],
-        )
-        .await?;
+            &[],
+        ),
+    )?;
 
-    let mut columns = Vec::new();
+    // Columns grouped by table oid, in attnum order
+    let mut columns_by_table: HashMap<u32, Vec<ColumnInfo>> = HashMap::new();
 
-    for row in rows {
+    for row in column_rows {
         let identity: String = row.get("identity_generation");
         let identity_generation = if identity.is_empty() {
             None
@@ -101,14 +81,29 @@ async fn fetch_columns(
             Some(identity)
         };
 
-        columns.push(ColumnInfo {
-            name: row.get("column_name"),
-            data_type: row.get("data_type"),
-            is_nullable: row.get("is_nullable"),
-            column_default: row.get("column_default"),
-            identity_generation,
-        });
+        columns_by_table
+            .entry(row.get("table_oid"))
+            .or_default()
+            .push(ColumnInfo {
+                name: row.get("column_name"),
+                data_type: row.get("data_type"),
+                is_nullable: row.get("is_nullable"),
+                column_default: row.get("column_default"),
+                identity_generation,
+            });
     }
 
-    Ok(columns)
+    let tables = table_rows
+        .into_iter()
+        .map(|row| {
+            let table_oid: u32 = row.get("table_oid");
+            TableInfo {
+                schema_name: row.get("schema_name"),
+                table_name: row.get("table_name"),
+                columns: columns_by_table.remove(&table_oid).unwrap_or_default(),
+            }
+        })
+        .collect();
+
+    Ok(tables)
 }
