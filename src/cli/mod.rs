@@ -69,6 +69,11 @@ pub struct TestArgs {
     /// databases, so use it for the final check once the schema matches
     #[arg(long)]
     pub row_counts: bool,
+
+    /// Skip schemas matching this glob pattern when counting rows (`*` matches
+    /// any run of characters, `?` one character). Repeatable
+    #[arg(long, value_name = "PATTERN", requires = "row_counts")]
+    pub row_counts_exclude: Vec<String>,
 }
 
 #[derive(Parser)]

@@ -70,7 +70,7 @@ pgcmp apply --commit   # apply for real once test shows zero differences
 | `pgcmp init` | Interactive TUI setup: configure both connections, verify they work, write `CONFIG.toml`. Supports `--non-interactive` with `--new-connection` / `--old-connection`. |
 | `pgcmp pull` | Extract both schemas to `new.database/` and `old.database/` directories (one file per included PostgreSQL schema). `--new-only` / `--old-only` to limit. |
 | `pgcmp diff` | Live comparison of the two databases. XML report on stdout. Exit code `2` if differences exist, `0` if schemas match. |
-| `pgcmp test` | Validate and apply `MIGRATION.sql` to the old database in a transaction, diff the migrated schema against the new database, print the XML report, then **roll back**. `--row-counts` also captures before/after row counts for every table (a `COUNT(*)` per table, so slow on large databases). `--migration-file` to use a different file. |
+| `pgcmp test` | Validate and apply `MIGRATION.sql` to the old database in a transaction, diff the migrated schema against the new database, print the XML report, then **roll back**. `--row-counts` also captures before/after row counts for every table (a `COUNT(*)` per table, so slow on large databases); `--row-counts-exclude <PATTERN>` (repeatable) skips schemas matching a glob such as `audit*`. `--migration-file` to use a different file. |
 | `pgcmp apply` | Apply `MIGRATION.sql` to the old database. **Rolls back by default**; pass `--commit` to actually persist. |
 
 Progress and status messages go to stderr; the XML report goes to stdout, so you can redirect or pipe the report cleanly.

@@ -21,7 +21,7 @@ pgcmp is a PostgreSQL schema comparison CLI tool written in Rust. It compares "n
 | `pgcmp init` | Interactive TUI setup - configure connections, verify they work |
 | `pgcmp pull` | Extract schemas from both databases to `new.database/` and `old.database/` directories |
 | `pgcmp diff` | Live comparison between databases, print differences |
-| `pgcmp test` | Apply `MIGRATION.sql` in transaction, show diff (+ row counts with `--row-counts`), rollback |
+| `pgcmp test` | Apply `MIGRATION.sql` in transaction, show diff (+ row counts with `--row-counts`, skipping schemas matching `--row-counts-exclude` globs), rollback |
 | `pgcmp apply` | Apply `MIGRATION.sql` to old database (rollback by default, use `--commit` to persist) |
 
 ### Module Structure

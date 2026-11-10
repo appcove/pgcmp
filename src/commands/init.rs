@@ -4202,7 +4202,11 @@ fn generate_claude_md(state: &State) -> String {
     content.push_str(
         "can take a long time on large databases. Use plain `pgcmp test` while iterating, then run\n",
     );
-    content.push_str("`pgcmp test --row-counts` once the schema differences reach zero.\n\n");
+    content.push_str("`pgcmp test --row-counts` once the schema differences reach zero. Add\n");
+    content.push_str(
+        "`--row-counts-exclude <PATTERN>` (repeatable, glob syntax, e.g. `audit*`) to skip large\n",
+    );
+    content.push_str("schemas whose row counts are not relevant to the migration.\n\n");
     content.push_str(
         "In most cases, the total row count for each table must remain the same after migration.\n",
     );
