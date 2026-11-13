@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pull`, `diff`, `test`, and the `init` pull are much faster: each database is read over up to 8 connections, so object types are fetched in parallel, both databases are read at the same time, and table columns come from one query instead of one per table. `test` fetches the new database while the migration runs on the old one, and `--row-counts` takes the "before" counts in parallel.
 - `pgcmp init` handles git itself. It commits any uncommitted changes when it starts, and Save no longer refuses a dirty working tree: it commits changes made in the meantime, then commits what it wrote. In a directory without a repository, Save runs `git init` first. A failed commit is now reported instead of ignored. Existing changes are not auto-committed while `CONFIG.toml` is present but not git-ignored.
 - The `pgcmp init` Instruct tab shows `INSTRUCT.md` read-only and edits it in a dialog opened with `[ Edit ]` (Ctrl+S applies, Esc cancels, with a second Esc required to discard edits). The tab no longer captures keyboard focus. `[ Revert ]` drops staged edits.
+- `MIGRATION.sql` is validated with the PostgreSQL 18 parser (libpg_query 18, previously 17).
+- Minimum supported Rust version is now 1.88, required by updated dependencies (ratatui 0.30).
 
 ### Fixed
 

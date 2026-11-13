@@ -30,7 +30,7 @@ pub fn load_and_validate_migration(path: &Path) -> anyhow::Result<String> {
 /// - Must end with ROLLBACK
 fn validate_migration_structure(sql: &str) -> anyhow::Result<()> {
     // Parse SQL using PostgreSQL's actual parser
-    let result = pg_query::parse(sql)
+    let result = pg_query::parse(sql, pg_query::ParserOptions::DEFAULT)
         .map_err(|e| anyhow::anyhow!("Failed to parse migration SQL: {}", e))?;
 
     let stmts = &result.protobuf.stmts;

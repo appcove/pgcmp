@@ -140,13 +140,13 @@ fn compare_composite_types(
 
     // Check for modified attributes
     for (name, new_type) in &new.composite_attrs {
-        if let Some(old_type) = old_attrs.get(name.as_str()) {
-            if old_type != new_type {
-                differences.push(format!(
-                    "ALTER COMPOSITE ATTRIBUTE: {} — change {} from {} to {}",
-                    full_name, name, old_type, new_type
-                ));
-            }
+        if let Some(old_type) = old_attrs.get(name.as_str())
+            && old_type != new_type
+        {
+            differences.push(format!(
+                "ALTER COMPOSITE ATTRIBUTE: {} — change {} from {} to {}",
+                full_name, name, old_type, new_type
+            ));
         }
     }
 }

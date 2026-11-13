@@ -19,6 +19,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Tabs},
 };
+use ratatui_textarea::TextArea;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -26,7 +27,6 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
-use tui_textarea::TextArea;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tab {
@@ -1194,10 +1194,10 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                         state.focus = Focus::DbField(field.next());
                     }
                     // Validate and test connection when leaving field
-                    if let Some(form) = state.current_form() {
-                        if form.validate() {
-                            start_connection_test_for(state, state.tab);
-                        }
+                    if let Some(form) = state.current_form()
+                        && form.validate()
+                    {
+                        start_connection_test_for(state, state.tab);
                     }
                 }
                 KeyCode::BackTab | KeyCode::Up => {
@@ -1206,10 +1206,10 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                     } else {
                         state.focus = Focus::DbField(field.prev());
                     }
-                    if let Some(form) = state.current_form() {
-                        if form.validate() {
-                            start_connection_test_for(state, state.tab);
-                        }
+                    if let Some(form) = state.current_form()
+                        && form.validate()
+                    {
+                        start_connection_test_for(state, state.tab);
                     }
                 }
                 KeyCode::Left | KeyCode::Right if field == Field::Tls => {
@@ -1226,14 +1226,14 @@ fn handle_tab_key_event(code: KeyCode, state: &mut State) -> anyhow::Result<()> 
                 }
                 _ => {
                     // Forward to input handler
-                    if let Some(form) = state.current_form() {
-                        if let Some(input) = form.input_mut(field) {
-                            let fake_evt = Event::Key(crossterm::event::KeyEvent::new(
-                                code,
-                                crossterm::event::KeyModifiers::NONE,
-                            ));
-                            input.handle_event(&fake_evt);
-                        }
+                    if let Some(form) = state.current_form()
+                        && let Some(input) = form.input_mut(field)
+                    {
+                        let fake_evt = Event::Key(crossterm::event::KeyEvent::new(
+                            code,
+                            crossterm::event::KeyModifiers::NONE,
+                        ));
+                        input.handle_event(&fake_evt);
                     }
                 }
             }
@@ -1550,11 +1550,11 @@ fn handle_mouse_click(col: u16, row: u16, state: &mut State) -> anyhow::Result<(
             ClickTarget::TlsOption(tab, mode) => {
                 state.tab = tab;
                 state.focus = Focus::DbField(Field::Tls);
-                if let Some(form) = state.current_form() {
-                    if form.tls != mode {
-                        form.tls = mode;
-                        start_connection_test_for(state, tab);
-                    }
+                if let Some(form) = state.current_form()
+                    && form.tls != mode
+                {
+                    form.tls = mode;
+                    start_connection_test_for(state, tab);
                 }
             }
             ClickTarget::PullButton(btn) => {

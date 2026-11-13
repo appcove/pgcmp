@@ -45,8 +45,10 @@ fn format_column(col: &ColumnInfo) -> String {
     }
 
     // Default value (skip for identity columns as it's implicit)
-    if col.identity_generation.is_none() && col.column_default.is_some() {
-        parts.push(format!("DEFAULT {}", col.column_default.as_ref().unwrap()));
+    if col.identity_generation.is_none()
+        && let Some(default) = &col.column_default
+    {
+        parts.push(format!("DEFAULT {default}"));
     }
 
     parts.join(" ")

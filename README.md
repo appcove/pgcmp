@@ -41,7 +41,7 @@ The `diff` and `test` commands emit structured XML on stdout, designed to be pas
 cargo install pgcmp
 ```
 
-Requires Rust 1.85+ and a C compiler (the build compiles [libpg_query](https://github.com/pganalyze/libpg_query), PostgreSQL's actual SQL parser, and libgit2).
+Requires Rust 1.88+ and a C compiler (the build compiles [libpg_query](https://github.com/pganalyze/libpg_query), PostgreSQL's actual SQL parser, and libgit2).
 
 ## Quick start
 

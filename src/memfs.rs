@@ -108,13 +108,13 @@ impl MemFs {
             match entry {
                 FileEntry::Content(content) => {
                     // Create parent directories if needed
-                    if let Some(parent) = full_path.parent() {
-                        if !parent.exists() {
-                            fs::create_dir_all(parent).with_context(|| {
-                                format!("Failed to create directory: {}", parent.display())
-                            })?;
-                            stats.dirs_created += 1;
-                        }
+                    if let Some(parent) = full_path.parent()
+                        && !parent.exists()
+                    {
+                        fs::create_dir_all(parent).with_context(|| {
+                            format!("Failed to create directory: {}", parent.display())
+                        })?;
+                        stats.dirs_created += 1;
                     }
 
                     // Write the file
